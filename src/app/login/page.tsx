@@ -10,6 +10,7 @@ import { Alert } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { loginSchema } from "@/lib/validations";
 import { Mail, Lock, ArrowRight } from "lucide-react";
+import { trackConversion } from "@/lib/analytics-client";
 
 function LoginForm() {
   const router = useRouter();
@@ -58,6 +59,7 @@ function LoginForm() {
         return;
       }
 
+      trackConversion("LOGIN_SUCCESS");
       if (!data.data.hasBusiness) {
         router.push("/onboarding");
       } else {

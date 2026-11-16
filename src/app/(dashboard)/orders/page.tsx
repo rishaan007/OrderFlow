@@ -82,6 +82,7 @@ export default function OrdersPage() {
       fetchOrders(1);
     }, 250);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, statusFilter, paymentFilter, sourceFilter]);
 
   // Quick State Transitions

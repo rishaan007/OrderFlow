@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
 import { ProductItem, CustomerItem } from "@/types";
 import { formatCurrency } from "@/lib/utils";
+import { trackConversion } from "@/lib/analytics-client";
 
 interface OrderItemRow {
   productId?: string;
@@ -76,6 +77,7 @@ export default function NewOrderPage() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [createdOrder, setCreatedOrder] = useState<{ id: string; orderNumber: string; total: number } | null>(null);
 
   // Load products and customers on mount
   useEffect(() => {
@@ -260,14 +262,73 @@ export default function NewOrderPage() {
         throw new Error(json.error || "Failed to create order");
       }
 
-      router.push("/orders");
-      router.refresh();
+      setCreatedOrder({
+        id: json.data.id,
+        orderNumber: json.data.orderNumber,
+        total: json.data.total,
+      });
+      trackConversion("ORDER_CREATED", { orderId: json.data.id });
+      setIsSubmitting(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error creating order";
       setErrorMessage(msg);
       setIsSubmitting(false);
     }
   };
+
+  if (createdOrder) {
+    return (
+      <div className="max-w-xl mx-auto py-12 px-4">
+        <Card className="border-emerald-200 bg-white shadow-md text-center p-8 space-y-6">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
+            <CheckCircle2 className="h-10 w-10" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-bold tracking-tight text-surface-900">
+              Order Confirmed &amp; Created!
+            </h2>
+            <p className="text-sm text-surface-600">
+              Order <span className="font-mono font-bold text-surface-900">{createdOrder.orderNumber}</span> has been confirmed. Inventory stock has been automatically deducted.
+            </p>
+          </div>
+          <div className="rounded-xl border border-surface-200 bg-surface-50 p-4 max-w-sm mx-auto text-left">
+            <div className="flex justify-between text-xs text-surface-500 mb-1">
+              <span>Order Number</span>
+              <span className="font-mono font-semibold text-surface-900">{createdOrder.orderNumber}</span>
+            </div>
+            <div className="flex justify-between text-xs text-surface-500">
+              <span>Total Amount</span>
+              <span className="font-semibold text-emerald-700">{formatCurrency(createdOrder.total)}</span>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            <Link href="/orders" className="w-full sm:w-auto">
+              <Button className="w-full sm:w-auto gap-2">
+                <ShoppingBag className="h-4 w-4" />
+                <span>Go to Orders List</span>
+              </Button>
+            </Link>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setCreatedOrder(null);
+                setItems([]);
+                setDiscountValue(0);
+                setShippingFee(0);
+                setTaxFee(0);
+                setNotes("");
+                setCustomerNotes("");
+              }}
+              className="w-full sm:w-auto gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Create Another Order</span>
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-12">

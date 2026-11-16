@@ -138,7 +138,7 @@ export function Sidebar({ session, onCloseMobile }: SidebarProps) {
       </div>
 
       {/* Main Navigation */}
-      <nav className="flex-1 space-y-1 p-3 overflow-y-auto">
+      <nav aria-label="Workspace navigation" className="flex-1 space-y-1 p-3 overflow-y-auto">
         <div className="px-3 pb-1 pt-2">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-surface-400">
             Navigation
