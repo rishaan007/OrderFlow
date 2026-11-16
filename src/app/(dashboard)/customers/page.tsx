@@ -90,6 +90,7 @@ export default function CustomersPage() {
       fetchCustomers(1);
     }, 250);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, sortBy]);
 
   const openCreateModal = () => {

@@ -140,6 +140,7 @@ export default function UnifiedInboxPage() {
   useEffect(() => {
     fetchConversations();
     fetchCatalogAndCustomers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelFilter, statusFilter]);
 
   // Handle Search Debounce
@@ -148,6 +149,7 @@ export default function UnifiedInboxPage() {
       fetchConversations();
     }, 300);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery]);
 
   // 3. Select Conversation & Load Full Thread

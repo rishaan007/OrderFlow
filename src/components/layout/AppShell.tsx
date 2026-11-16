@@ -23,7 +23,7 @@ export function AppShell({ session, children }: AppShellProps) {
 
       {/* Mobile Sidebar Overlay */}
       {mobileMenuOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation menu">
           {/* Backdrop */}
           <div
             className="fixed inset-0 bg-surface-900/40 backdrop-blur-sm transition-opacity"
@@ -55,7 +55,7 @@ export function AppShell({ session, children }: AppShellProps) {
           session={session}
           onOpenMobileMenu={() => setMobileMenuOpen(true)}
         />
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+        <main id="main-content" className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
           {children}
         </main>
       </div>

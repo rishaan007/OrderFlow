@@ -9,6 +9,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Alert } from "@/components/ui/alert";
 import { registerSchema } from "@/lib/validations";
 import { Mail, Lock, User, ArrowRight } from "lucide-react";
+import { trackConversion } from "@/lib/analytics-client";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -57,6 +58,7 @@ export default function RegisterPage() {
       }
 
       // Success: navigate to onboarding
+      trackConversion("REGISTER_SUCCESS");
       router.push("/onboarding");
       router.refresh();
     } catch {
