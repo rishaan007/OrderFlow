@@ -233,6 +233,35 @@ export default function UnifiedInboxPage() {
     }
   };
 
+  // 4b. Send Outbound Transaction or Payment Link via Connected Channel
+  const handleSendOutbound = async (
+    messageType: "TRANSACTION_LINK" | "PAYMENT_REQUEST" | "ORDER_CONFIRMATION"
+  ) => {
+    if (!selectedConversation) return;
+    setIsSendingMessage(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      const res = await fetch(`/api/conversations/${selectedConversation.id}/send-outbound`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageType }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActionSuccess(data.message || `Outbound ${messageType.replace(/_/g, " ")} dispatched.`);
+        await selectConversation(selectedConversation.id);
+        fetchConversations();
+      } else {
+        setActionError(data.error || "Failed to dispatch outbound message");
+      }
+    } catch (err: any) {
+      setActionError(err.message || "Failed to send outbound message");
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+
   // 5. Trigger AI Order Extraction
   const handleExtractOrder = async () => {
     if (!selectedConversation) return;
@@ -476,6 +505,20 @@ export default function UnifiedInboxPage() {
             Instagram
           </span>
         );
+      case "FACEBOOK":
+        return (
+          <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200">
+            <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+            Facebook
+          </span>
+        );
+      case "X":
+        return (
+          <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-800 border border-slate-300">
+            <span className="h-1.5 w-1.5 rounded-full bg-slate-900" />
+            X / Twitter
+          </span>
+        );
       case "MANUAL":
       default:
         return (
@@ -583,7 +626,7 @@ export default function UnifiedInboxPage() {
 
             {/* Filter Pills */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-              {["ALL", "WHATSAPP", "INSTAGRAM", "MANUAL"].map((ch) => (
+              {["ALL", "WHATSAPP", "INSTAGRAM", "FACEBOOK", "X", "MANUAL"].map((ch) => (
                 <button
                   key={ch}
                   onClick={() => setChannelFilter(ch)}
@@ -793,29 +836,50 @@ export default function UnifiedInboxPage() {
 
               {/* Message Composer */}
               <div className="p-3 border-t border-surface-200 bg-white">
-                <div className="flex items-center gap-2 mb-2">
-                  <button
-                    type="button"
-                    onClick={() => setMessageMode("reply")}
-                    className={`text-xs font-semibold px-2.5 py-1 rounded-md transition-colors ${
-                      messageMode === "reply"
-                        ? "bg-brand-100 text-brand-800"
-                        : "text-surface-500 hover:bg-surface-100"
-                    }`}
-                  >
-                    Reply to Customer
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMessageMode("note")}
-                    className={`text-xs font-semibold px-2.5 py-1 rounded-md transition-colors ${
-                      messageMode === "note"
-                        ? "bg-amber-100 text-amber-800"
-                        : "text-surface-500 hover:bg-surface-100"
-                    }`}
-                  >
-                    Internal Staff Note
-                  </button>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMessageMode("reply")}
+                      className={`text-xs font-semibold px-2.5 py-1 rounded-md transition-colors ${
+                        messageMode === "reply"
+                          ? "bg-brand-100 text-brand-800"
+                          : "text-surface-500 hover:bg-surface-100"
+                      }`}
+                    >
+                      Reply to Customer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMessageMode("note")}
+                      className={`text-xs font-semibold px-2.5 py-1 rounded-md transition-colors ${
+                        messageMode === "note"
+                          ? "bg-amber-100 text-amber-800"
+                          : "text-surface-500 hover:bg-surface-100"
+                      }`}
+                    >
+                      Internal Staff Note
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleSendOutbound("TRANSACTION_LINK")}
+                      disabled={isSendingMessage}
+                      className="text-[11px] font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200 px-2 py-0.5 rounded transition-colors"
+                    >
+                      Send Room Link
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSendOutbound("PAYMENT_REQUEST")}
+                      disabled={isSendingMessage}
+                      className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded transition-colors"
+                    >
+                      Request Payment
+                    </button>
+                  </div>
                 </div>
 
                 <form onSubmit={handleSendMessage} className="flex gap-2">
@@ -1217,13 +1281,13 @@ export default function UnifiedInboxPage() {
                 <label className="text-xs font-medium text-surface-700 block mb-1">
                   Channel Source
                 </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(["WHATSAPP", "INSTAGRAM", "MANUAL"] as ConversationChannel[]).map((ch) => (
+                <div className="grid grid-cols-5 gap-1.5">
+                  {(["WHATSAPP", "INSTAGRAM", "FACEBOOK", "X", "MANUAL"] as ConversationChannel[]).map((ch) => (
                     <button
                       key={ch}
                       type="button"
                       onClick={() => setIntakeForm({ ...intakeForm, channel: ch })}
-                      className={`p-2 rounded-lg text-xs font-semibold border text-center transition-all ${
+                      className={`p-1.5 rounded-lg text-[11px] font-semibold border text-center transition-all ${
                         intakeForm.channel === ch
                           ? "border-brand-600 bg-brand-50 text-brand-700"
                           : "border-surface-200 bg-white text-surface-600 hover:bg-surface-50"
@@ -1242,6 +1306,10 @@ export default function UnifiedInboxPage() {
                     ? "+1234567890"
                     : intakeForm.channel === "INSTAGRAM"
                     ? "@buyer_handle"
+                    : intakeForm.channel === "FACEBOOK"
+                    ? "Facebook User ID or Profile"
+                    : intakeForm.channel === "X"
+                    ? "@x_handle"
                     : "Customer Phone or ID"
                 }
                 value={intakeForm.contactIdentifier}

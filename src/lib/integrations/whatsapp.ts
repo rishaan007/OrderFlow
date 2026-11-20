@@ -45,10 +45,14 @@ export function verifyMetaSignature(
     .update(rawBody, "utf8")
     .digest("hex");
 
-  return crypto.timingSafeEqual(
-    Buffer.from(calculatedHash, "hex"),
-    Buffer.from(expectedHash, "hex")
-  );
+  const calcBuf = Buffer.from(calculatedHash, "hex");
+  const expBuf = Buffer.from(expectedHash, "hex");
+
+  if (calcBuf.length !== expBuf.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(calcBuf, expBuf);
 }
 
 /**

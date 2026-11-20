@@ -1,14 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import {
   parseWhatsAppWebhook,
   verifyMetaSignature,
   verifyWhatsAppWebhookSubscription,
 } from "@/lib/integrations/whatsapp";
-import { ConversationChannel, MessageSenderType, MessageType } from "@prisma/client";
+import {
+  validatePayloadSize,
+  validateReplayWindow,
+  recordAndDeduplicateEvent,
+  resolveTenantForInbound,
+  processNormalizedInboundMessage,
+  logSocialEvent,
+} from "@/lib/social-events";
+import { SocialPlatform, SocialSurface } from "@prisma/client";
 
 /**
- * Webhook Verification Handler (Meta Developer Portal Webhook Verification)
+ * Webhook Verification Handler (Meta WhatsApp Cloud API Verification)
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -16,8 +23,14 @@ export async function GET(request: NextRequest) {
   const token = searchParams.get("hub.verify_token");
   const challenge = searchParams.get("hub.challenge");
 
-  const expectedToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || "orderflow_verify_token_2025";
-  const verified = verifyWhatsAppWebhookSubscription(mode, token, challenge, expectedToken);
+  const expectedToken =
+    process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN || "orderflow_verify_token_2025";
+  const verified = verifyWhatsAppWebhookSubscription(
+    mode,
+    token,
+    challenge,
+    expectedToken
+  );
 
   if (verified) {
     return new Response(verified, { status: 200 });
@@ -32,11 +45,26 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.text();
+
+    // 1. Oversized payload defense
+    if (!validatePayloadSize(rawBody)) {
+      logSocialEvent("WEBHOOK_REJECTED", {
+        reason: "WhatsApp webhook payload exceeded 1MB limit",
+      });
+      return NextResponse.json(
+        { error: "Payload too large" },
+        { status: 413 }
+      );
+    }
+
     const signature = request.headers.get("x-hub-signature-256");
     const appSecret = process.env.META_APP_SECRET;
 
-    // Verify signature if secret is configured
+    // 2. Cryptographic signature verification
     if (appSecret && !verifyMetaSignature(rawBody, signature, appSecret)) {
+      logSocialEvent("WEBHOOK_REJECTED", {
+        reason: "Invalid Meta HMAC SHA-256 signature for WhatsApp",
+      });
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
 
@@ -44,88 +72,98 @@ export async function POST(request: NextRequest) {
     const messages = parseWhatsAppWebhook(payload);
 
     if (messages.length === 0) {
-      return NextResponse.json({ status: "ignored_or_status_update" }, { status: 200 });
+      return NextResponse.json(
+        { status: "ignored_or_status_update" },
+        { status: 200 }
+      );
     }
 
-    // Process each inbound message
-    for (const msg of messages) {
-      // Find business: match by configured whatsappNumber, or default to first business
-      const businessProfile = await prisma.businessProfile.findFirst({
-        where: {
-          whatsappNumber: { not: null },
-        },
-        include: { business: true },
-      });
+    let processedCount = 0;
+    let duplicateCount = 0;
 
-      const business = businessProfile?.business || (await prisma.business.findFirst());
-      if (!business) {
-        console.warn("No business found to attach WhatsApp webhook message");
+    for (const msg of messages) {
+      const msgTimestamp =
+        parseInt(msg.timestamp, 10) * 1000 || Date.now();
+
+      // 3. Replay attack window check
+      if (!validateReplayWindow(msgTimestamp)) {
+        logSocialEvent("WEBHOOK_REJECTED", {
+          messageId: msg.messageId,
+          reason: "WhatsApp event timestamp outside replay window",
+        });
         continue;
       }
 
-      // Check if conversation already exists for this sender
-      let conversation = await prisma.conversation.findFirst({
-        where: {
-          businessId: business.id,
-          channel: ConversationChannel.WHATSAPP,
-          contactIdentifier: msg.from,
+      // Extract destination phone number ID from payload
+      const phoneNumberId =
+        payload?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id ||
+        payload?.entry?.[0]?.changes?.[0]?.value?.metadata?.display_phone_number;
+
+      // 4. Atomic Deduplication via SocialEvent unique constraint
+      const dedupResult = await recordAndDeduplicateEvent({
+        provider: SocialPlatform.WHATSAPP,
+        externalEventId: msg.messageId,
+        externalAccountId: phoneNumberId,
+        externalUserId: msg.from,
+        occurredAt: new Date(msgTimestamp),
+        payload: {
+          from: msg.from,
+          name: msg.name,
+          type: msg.type,
+          text: msg.text,
         },
       });
 
-      if (!conversation) {
-        // Auto-link to existing customer by phone if available
-        const customer = await prisma.customer.findFirst({
-          where: {
-            businessId: business.id,
-            phone: { contains: msg.from.slice(-8) },
-          },
-        });
-
-        conversation = await prisma.conversation.create({
-          data: {
-            businessId: business.id,
-            channel: ConversationChannel.WHATSAPP,
-            contactIdentifier: msg.from,
-            contactName: msg.name || `+${msg.from}`,
-            customerId: customer?.id || null,
-            externalChatId: msg.from,
-            lastMessageAt: new Date(parseInt(msg.timestamp, 10) * 1000 || Date.now()),
-            lastMessageSnippet: (msg.text || "").slice(0, 120),
-            unreadCount: 1,
-          },
-        });
-      } else {
-        await prisma.conversation.update({
-          where: { id: conversation.id },
-          data: {
-            lastMessageAt: new Date(parseInt(msg.timestamp, 10) * 1000 || Date.now()),
-            lastMessageSnippet: (msg.text || "").slice(0, 120),
-            unreadCount: { increment: 1 },
-            ...(msg.name && !conversation.contactName ? { contactName: msg.name } : {}),
-          },
-        });
+      if (dedupResult.isDuplicate) {
+        duplicateCount++;
+        continue;
       }
 
-      // Persist inbound message
-      await prisma.message.create({
-        data: {
-          conversationId: conversation.id,
-          senderType: MessageSenderType.CUSTOMER,
-          senderName: msg.name || `+${msg.from}`,
-          content: msg.text || (msg.type === "image" ? "[Image attachment]" : "[Message]"),
-          mediaUrl: msg.mediaUrl || null,
-          mediaType: msg.mimeType || null,
-          messageType: msg.type === "image" ? MessageType.IMAGE : MessageType.TEXT,
+      // 5. Strict Tenant Resolution
+      const businessId = await resolveTenantForInbound(
+        SocialPlatform.WHATSAPP,
+        phoneNumberId || ""
+      );
+
+      if (!businessId) {
+        logSocialEvent("WEBHOOK_REJECTED", {
+          messageId: msg.messageId,
+          phoneNumberId,
+          reason: "No registered business matches recipient phone number ID",
+        });
+        continue;
+      }
+
+      // 6. Normalize and ingest message
+      await processNormalizedInboundMessage({
+        businessId,
+        eventId: dedupResult.event.id,
+        message: {
           externalMessageId: msg.messageId,
-          createdAt: new Date(parseInt(msg.timestamp, 10) * 1000 || Date.now()),
+          externalSenderId: msg.from,
+          senderName: msg.name,
+          platform: SocialPlatform.WHATSAPP,
+          surface: SocialSurface.DIRECT_CHAT,
+          content: msg.text || "",
+          mediaUrl: msg.mediaUrl,
+          mediaType: msg.type === "image" ? "image" : undefined,
+          timestamp: new Date(msgTimestamp),
         },
       });
+
+      processedCount++;
     }
 
-    return NextResponse.json({ status: "success", count: messages.length });
-  } catch (error) {
-    console.error("WhatsApp webhook error:", error);
-    // Meta requires 200 OK to avoid infinite retry storms on application errors
-    return NextResponse.json({ status: "processed_with_errors" }, { status: 200 });
+    return NextResponse.json({
+      status: "success",
+      processed: processedCount,
+      duplicates: duplicateCount,
+    });
+  } catch (error: any) {
+    console.error("WhatsApp webhook processing error:", error);
+    return NextResponse.json(
+      { status: "processed_with_errors", error: error.message },
+      { status: 200 }
+    );
   }
 }

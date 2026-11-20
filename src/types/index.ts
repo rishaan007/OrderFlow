@@ -24,6 +24,10 @@ import {
   EvidenceVerificationState,
   DisputeStatus,
   ChannelSyncStatus,
+  ConnectionStatus,
+  ConnectionHealthStatus,
+  SocialEventType,
+  EventProcessingStatus,
 } from "@prisma/client";
 
 export {
@@ -52,6 +56,10 @@ export {
   EvidenceVerificationState,
   DisputeStatus,
   ChannelSyncStatus,
+  ConnectionStatus,
+  ConnectionHealthStatus,
+  SocialEventType,
+  EventProcessingStatus,
 };
 
 export interface SessionUser {
