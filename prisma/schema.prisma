@@ -265,6 +265,8 @@ model User {
   businessMembers BusinessMember[]
   auditLogs       AuditLog[]
   invitationsSent TeamInvitation[] @relation("InvitedByUser")
+  claimedTransactions SocialTransaction[] @relation("BuyerTransactions")
+  notifications   Notification[]   @relation("UserNotifications")
 
   @@map("users")
 }
@@ -635,26 +637,34 @@ model AutomationJob {
 }
 
 model Notification {
-  id         String             @id @default(uuid())
-  businessId String
-  orderId    String?
-  customerId String?
-  channel    String             // WHATSAPP | INSTAGRAM | IN_APP | EMAIL
-  recipient  String
-  title      String
-  content    String
-  status     NotificationStatus @default(QUEUED)
-  sentAt     DateTime?
-  createdAt  DateTime           @default(now())
-  updatedAt  DateTime           @updatedAt
+  id            String             @id @default(uuid())
+  businessId    String
+  orderId       String?
+  customerId    String?
+  transactionId String?
+  userId        String?
+  channel       String             // WHATSAPP | INSTAGRAM | IN_APP | EMAIL
+  recipient     String
+  title         String
+  content       String
+  status        NotificationStatus @default(QUEUED)
+  readAt        DateTime?
+  sentAt        DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
 
-  business   Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  order      Order?             @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  customer   Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  business      Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order         Order?             @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  customer      Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  transaction   SocialTransaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  user          User?              @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([businessId])
   @@index([orderId])
+  @@index([transactionId])
+  @@index([userId])
   @@index([status])
+  @@index([readAt])
   @@map("notifications")
 }
 
@@ -697,6 +707,7 @@ model SocialTransaction {
   metadata               Json?
   buyerNotes             String?
   sellerNotes            String?
+  buyerUserId            String?
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
 
@@ -704,15 +715,18 @@ model SocialTransaction {
   order          Order?                     @relation(fields: [orderId], references: [id], onDelete: SetNull)
   customer       Customer?                  @relation(fields: [customerId], references: [id], onDelete: SetNull)
   conversation   Conversation?              @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  buyerUser      User?                      @relation("BuyerTransactions", fields: [buyerUserId], references: [id], onDelete: SetNull)
   timelineEvents TransactionTimelineEvent[]
   evidence       TransactionEvidence[]
   disputes       TransactionDispute[]
+  notifications  Notification[]
 
   @@index([businessId])
   @@index([businessId, status])
   @@index([businessId, createdAt])
   @@index([customerId])
   @@index([conversationId])
+  @@index([buyerUserId])
   @@index([publicTrackingToken])
   @@map("social_transactions")
 }

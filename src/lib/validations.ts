@@ -443,3 +443,34 @@ export type AddEvidenceInput = z.infer<typeof addEvidenceSchema>;
 export type CreateDisputeInput = z.infer<typeof createDisputeSchema>;
 export type UpdateDisputeInput = z.infer<typeof updateDisputeSchema>;
 export type UpsertChannelListingInput = z.infer<typeof upsertChannelListingSchema>;
+
+// --- Buyer OS & Experience Schemas ---
+
+export const confirmDeliverySchema = z.object({
+  recipientName: z.string().min(2, "Recipient name must be at least 2 characters").max(80),
+  phone: z.string().min(6, "Valid contact phone number is required").max(25),
+  email: z.string().email("Valid email required").optional().nullable().or(z.literal("")),
+  shippingAddress: z.string().min(5, "Full street address is required").max(200),
+  city: z.string().optional().nullable(),
+  state: z.string().optional().nullable(),
+  postalCode: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
+export const submitBuyerPaymentSchema = z.object({
+  method: z
+    .enum(["UPI", "CASH", "BANK_TRANSFER", "CARD", "OTHER"])
+    .default("UPI"),
+  amount: z.coerce.number().positive("Payment amount must be greater than zero"),
+  referenceNumber: z.string().min(3, "Transaction reference or UTR is required").max(80),
+  screenshotUrl: z.string().url("Valid image URL required").optional().nullable().or(z.literal("")),
+  notes: z.string().optional().nullable(),
+});
+
+export const claimTransactionSchema = z.object({
+  token: z.string().min(8, "Valid transaction tracking token is required"),
+});
+
+export type ConfirmDeliveryInput = z.infer<typeof confirmDeliverySchema>;
+export type SubmitBuyerPaymentInput = z.infer<typeof submitBuyerPaymentSchema>;
+export type ClaimTransactionInput = z.infer<typeof claimTransactionSchema>;

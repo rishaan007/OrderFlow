@@ -235,6 +235,114 @@ export default function PublicTransactionRoomPage() {
         </Card>
 
         {/* 2. Canonical Order & Payment Card */}
+          {/* Delivery Confirmation Form (Guest) */}
+          {(!data.order?.shippingAddress) && (
+            <Card className="border-surface-200 shadow-sm mt-4">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold">Confirm Delivery Information</CardTitle>
+                <CardDescription className="text-xs">Provide shipping address to finalize your order.</CardDescription>
+              </CardHeader>
+              <CardContent className="pt-4 space-y-4">
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const form = e.currentTarget as HTMLFormElement;
+                    const formData = new FormData(form);
+                    const payload = {
+                      recipientName: formData.get('recipientName'),
+                      phone: formData.get('phone'),
+                      email: formData.get('email'),
+                      shippingAddress: formData.get('shippingAddress'),
+                      city: formData.get('city'),
+                      state: formData.get('state'),
+                      postalCode: formData.get('postalCode'),
+                      notes: formData.get('notes'),
+                    };
+                    setIsLoading(true);
+                    try {
+                      const res = await fetch(`/api/public/transactions/${encodeURIComponent(token)}/confirm-delivery`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                      });
+                      const json = await res.json();
+                      if (!res.ok || !json.success) throw new Error(json.error || 'Delivery confirmation failed');
+                      await fetchTransaction();
+                    } catch (err) {
+                      alert(err instanceof Error ? err.message : 'Error');
+                    } finally { setIsLoading(false); }
+                  }}
+                >
+                  <div className="grid gap-2">
+                    <input name="recipientName" placeholder="Recipient Name" required className="w-full rounded-md border p-2" />
+                    <input name="phone" placeholder="Phone (optional)" className="w-full rounded-md border p-2" />
+                    <input name="email" placeholder="Email (optional)" type="email" className="w-full rounded-md border p-2" />
+                    <input name="shippingAddress" placeholder="Street address" required className="w-full rounded-md border p-2" />
+                    <input name="city" placeholder="City" required className="w-full rounded-md border p-2" />
+                    <input name="state" placeholder="State/Region" className="w-full rounded-md border p-2" />
+                    <input name="postalCode" placeholder="Postal Code" className="w-full rounded-md border p-2" />
+                    <textarea name="notes" placeholder="Additional notes (optional)" className="w-full rounded-md border p-2" rows={2} />
+                  </div>
+                  <Button type="submit" className="mt-3" disabled={isLoading}>Confirm Delivery</Button>
+                </form>
+              </CardContent>
+            </Card>
+          )}
+          
+          {/* Payment Proof Form (Guest) */}
+          {data.order?.paymentStatus !== 'PAID' && (
+            <Card className="border-surface-200 shadow-sm mt-4">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold">Submit Payment Proof</CardTitle>
+                <CardDescription className="text-xs">Upload a screenshot or reference number for your payment.</CardDescription>
+              </CardHeader>
+              <CardContent className="pt-4 space-y-4">
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const form = e.currentTarget as HTMLFormElement;
+                    const formData = new FormData(form);
+                    const payload = {
+                      amount: formData.get('amount'),
+                      method: formData.get('method'),
+                      referenceNumber: formData.get('referenceNumber'),
+                      screenshotUrl: formData.get('screenshotUrl'),
+                      notes: formData.get('notes'),
+                    };
+                    setIsLoading(true);
+                    try {
+                      const res = await fetch(`/api/public/transactions/${encodeURIComponent(token)}/payment-proof`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                      });
+                      const json = await res.json();
+                      if (!res.ok || !json.success) throw new Error(json.error || 'Payment proof submission failed');
+                      await fetchTransaction();
+                    } catch (err) {
+                      alert(err instanceof Error ? err.message : 'Error');
+                    } finally { setIsLoading(false); }
+                  }}
+                >
+                  <div className="grid gap-2">
+                    <input name="amount" placeholder="Amount (e.g., 49.99)" required type="number" step="0.01" className="w-full rounded-md border p-2" />
+                    <select name="method" required className="w-full rounded-md border p-2">
+                      <option value="">Select method</option>
+                      <option value="BANK_TRANSFER">Bank Transfer</option>
+                      <option value="UPI">UPI</option>
+                      <option value="CREDIT_CARD">Credit Card</option>
+                    </select>
+                    <input name="referenceNumber" placeholder="Reference / Transaction ID" required className="w-full rounded-md border p-2" />
+                    <input name="screenshotUrl" placeholder="Screenshot URL (optional)" className="w-full rounded-md border p-2" />
+                    <textarea name="notes" placeholder="Additional notes (optional)" className="w-full rounded-md border p-2" rows={2} />
+                  </div>
+                  <Button type="submit" className="mt-3" disabled={isLoading}>Submit Proof</Button>
+                </form>
+              </CardContent>
+            </Card>
+          )}
+          
+          {/* Existing Order Card continues below */}
         {data.order && (
           <Card className="border-surface-200 shadow-sm">
             <CardHeader className="border-b border-surface-100 pb-4">
