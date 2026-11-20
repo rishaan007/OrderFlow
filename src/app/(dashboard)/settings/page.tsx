@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
@@ -443,9 +444,17 @@ export default function SettingsPage() {
             </div>
 
             <div className="border-t border-surface-200 pt-6">
-              <h4 className="text-sm font-semibold text-surface-900 mb-1">
-                Connected Sales Channels
-              </h4>
+              <div className="flex items-center justify-between mb-1">
+                <h4 className="text-sm font-semibold text-surface-900">
+                  Connected Sales Channels
+                </h4>
+                <Link
+                  href="/settings/integrations"
+                  className="text-xs text-brand-600 hover:text-brand-700 font-semibold flex items-center gap-1"
+                >
+                  Manage Live Integrations & OAuth →
+                </Link>
+              </div>
               <p className="text-xs text-surface-500 mb-4">
                 These handles are linked to customer order confirmations and WhatsApp receipts.
               </p>

@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import {
   parseInstagramWebhook,
   verifyInstagramWebhookSubscription,
 } from "@/lib/integrations/instagram";
 import { verifyMetaSignature } from "@/lib/integrations/whatsapp";
-import { ConversationChannel, MessageSenderType, MessageType } from "@prisma/client";
+import {
+  validatePayloadSize,
+  validateReplayWindow,
+  recordAndDeduplicateEvent,
+  resolveTenantForInbound,
+  processNormalizedInboundMessage,
+  logSocialEvent,
+} from "@/lib/social-events";
+import { SocialPlatform, SocialSurface } from "@prisma/client";
 
 /**
  * Webhook Verification Handler (Instagram Messaging Graph API Verification)
@@ -16,8 +23,14 @@ export async function GET(request: NextRequest) {
   const token = searchParams.get("hub.verify_token");
   const challenge = searchParams.get("hub.challenge");
 
-  const expectedToken = process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN || "orderflow_verify_token_2025";
-  const verified = verifyInstagramWebhookSubscription(mode, token, challenge, expectedToken);
+  const expectedToken =
+    process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN || "orderflow_verify_token_2025";
+  const verified = verifyInstagramWebhookSubscription(
+    mode,
+    token,
+    challenge,
+    expectedToken
+  );
 
   if (verified) {
     return new Response(verified, { status: 200 });
@@ -27,16 +40,31 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Webhook Event Consumer (Incoming Instagram DMs & Stories Replies)
+ * Webhook Event Consumer (Incoming Instagram DMs & Story Replies)
  */
 export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.text();
+
+    // 1. Oversized payload defense
+    if (!validatePayloadSize(rawBody)) {
+      logSocialEvent("WEBHOOK_REJECTED", {
+        reason: "Payload exceeded size limit (1MB)",
+      });
+      return NextResponse.json(
+        { error: "Payload too large" },
+        { status: 413 }
+      );
+    }
+
     const signature = request.headers.get("x-hub-signature-256");
     const appSecret = process.env.META_APP_SECRET;
 
-    // Verify signature if secret is configured
+    // 2. Cryptographic signature verification
     if (appSecret && !verifyMetaSignature(rawBody, signature, appSecret)) {
+      logSocialEvent("WEBHOOK_REJECTED", {
+        reason: "Invalid HMAC SHA-256 signature",
+      });
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
 
@@ -47,93 +75,88 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: "ignored" }, { status: 200 });
     }
 
-    for (const msg of messages) {
-      // Find business: match by configured instagramPageId or instagramHandle, or default
-      const businessProfile = await prisma.businessProfile.findFirst({
-        where: {
-          OR: [
-            { instagramPageId: msg.recipientId },
-            { instagramHandle: { not: null } },
-          ],
-        },
-        include: { business: true },
-      });
+    let processedCount = 0;
+    let duplicateCount = 0;
 
-      const business = businessProfile?.business || (await prisma.business.findFirst());
-      if (!business) {
-        console.warn("No business found to attach Instagram webhook message");
+    for (const msg of messages) {
+      const msgTimestamp = parseInt(msg.timestamp, 10) || Date.now();
+
+      // 3. Replay attack window validation (15 minutes)
+      if (!validateReplayWindow(msgTimestamp)) {
+        logSocialEvent("WEBHOOK_REJECTED", {
+          messageId: msg.messageId,
+          reason: "Event timestamp outside valid 15-minute replay window",
+        });
         continue;
       }
 
-      // Check if conversation already exists for this sender ID
-      let conversation = await prisma.conversation.findFirst({
-        where: {
-          businessId: business.id,
-          channel: ConversationChannel.INSTAGRAM,
-          OR: [
-            { externalChatId: msg.senderId },
-            { contactIdentifier: `@ig_${msg.senderId.slice(-6)}` },
-          ],
+      // 4. Atomic Deduplication via SocialEvent unique constraint
+      const dedupResult = await recordAndDeduplicateEvent({
+        provider: SocialPlatform.INSTAGRAM,
+        externalEventId: msg.messageId,
+        externalAccountId: msg.recipientId,
+        externalUserId: msg.senderId,
+        occurredAt: new Date(msgTimestamp),
+        payload: {
+          text: msg.text,
+          recipientId: msg.recipientId,
+          senderId: msg.senderId,
         },
       });
 
-      const contactHandle = `@ig_user_${msg.senderId.slice(-4)}`;
-
-      if (!conversation) {
-        // Auto-link to existing customer by instagram handle if available
-        const customer = await prisma.customer.findFirst({
-          where: {
-            businessId: business.id,
-            instagramHandle: { not: null },
-          },
-        });
-
-        conversation = await prisma.conversation.create({
-          data: {
-            businessId: business.id,
-            channel: ConversationChannel.INSTAGRAM,
-            contactIdentifier: contactHandle,
-            contactName: `Instagram Buyer (${msg.senderId.slice(-4)})`,
-            customerId: customer?.id || null,
-            externalChatId: msg.senderId,
-            lastMessageAt: new Date(parseInt(msg.timestamp, 10) || Date.now()),
-            lastMessageSnippet: (msg.text || "").slice(0, 120),
-            unreadCount: 1,
-          },
-        });
-      } else {
-        await prisma.conversation.update({
-          where: { id: conversation.id },
-          data: {
-            lastMessageAt: new Date(parseInt(msg.timestamp, 10) || Date.now()),
-            lastMessageSnippet: (msg.text || "").slice(0, 120),
-            unreadCount: { increment: 1 },
-          },
-        });
+      if (dedupResult.isDuplicate) {
+        duplicateCount++;
+        continue;
       }
 
-      const mediaUrl = msg.attachments?.[0]?.url || null;
-      const mediaType = msg.attachments?.[0]?.type || null;
+      // 5. Strict Tenant Resolution (No cross-tenant leaks)
+      const businessId = await resolveTenantForInbound(
+        SocialPlatform.INSTAGRAM,
+        msg.recipientId
+      );
 
-      // Persist inbound message
-      await prisma.message.create({
-        data: {
-          conversationId: conversation.id,
-          senderType: MessageSenderType.CUSTOMER,
-          senderName: conversation.contactName || contactHandle,
-          content: msg.text || (mediaUrl ? "[Image / Story Reply]" : "[Instagram Message]"),
+      if (!businessId) {
+        logSocialEvent("WEBHOOK_REJECTED", {
+          messageId: msg.messageId,
+          recipientId: msg.recipientId,
+          reason: "No registered business matches destination account ID",
+        });
+        continue;
+      }
+
+      // 6. Ingest normalized message into conversation thread
+      const mediaUrl = msg.attachments?.[0]?.url;
+      const mediaType =
+        msg.attachments?.[0]?.type === "image" ? ("image" as const) : undefined;
+
+      await processNormalizedInboundMessage({
+        businessId,
+        eventId: dedupResult.event.id,
+        message: {
+          externalMessageId: msg.messageId,
+          externalSenderId: msg.senderId,
+          platform: SocialPlatform.INSTAGRAM,
+          surface: SocialSurface.DM,
+          content: msg.text || "",
           mediaUrl,
           mediaType,
-          messageType: mediaUrl ? MessageType.IMAGE : MessageType.TEXT,
-          externalMessageId: msg.messageId,
-          createdAt: new Date(parseInt(msg.timestamp, 10) || Date.now()),
+          timestamp: new Date(msgTimestamp),
         },
       });
+
+      processedCount++;
     }
 
-    return NextResponse.json({ status: "success", count: messages.length });
-  } catch (error) {
-    console.error("Instagram webhook error:", error);
-    return NextResponse.json({ status: "processed_with_errors" }, { status: 200 });
+    return NextResponse.json({
+      status: "success",
+      processed: processedCount,
+      duplicates: duplicateCount,
+    });
+  } catch (error: any) {
+    console.error("Instagram webhook processing error:", error);
+    return NextResponse.json(
+      { status: "processed_with_errors", error: error.message },
+      { status: 200 }
+    );
   }
 }

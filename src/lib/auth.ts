@@ -29,9 +29,21 @@ export function signSessionToken(payload: JWTPayload): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
 }
 
+export function signToken(payload: object, expiresIn: jwt.SignOptions["expiresIn"] = "15m"): string {
+  return jwt.sign(payload, JWT_SECRET, { expiresIn });
+}
+
 export function verifySessionToken(token: string): JWTPayload | null {
   try {
     return jwt.verify(token, JWT_SECRET) as JWTPayload;
+  } catch {
+    return null;
+  }
+}
+
+export function verifyToken(token: string): any {
+  try {
+    return jwt.verify(token, JWT_SECRET);
   } catch {
     return null;
   }

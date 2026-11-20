@@ -35,13 +35,18 @@ enum OrderSource {
   MANUAL
   WHATSAPP
   INSTAGRAM
+  FACEBOOK
+  X
   ONLINE
 }
 
 enum ConversationChannel {
   WHATSAPP
   INSTAGRAM
+  FACEBOOK
+  X
   MANUAL
+  OTHER
 }
 
 enum ConversationStatus {
@@ -102,6 +107,7 @@ enum SocialPlatform {
   INSTAGRAM
   FACEBOOK
   WHATSAPP
+  X
   TIKTOK
   TELEGRAM
   OTHER
@@ -120,6 +126,8 @@ enum SocialSurface {
   DIRECT_CHAT
   BUSINESS_PROFILE
   CATALOG
+  X_DM
+  TWEET
   MANUAL_ENTRY
   EXTERNAL_LINK
   OTHER
@@ -251,6 +259,44 @@ enum InvitationStatus {
   EXPIRED
 }
 
+enum ConnectionStatus {
+  CONNECTED
+  CONNECTING
+  REAUTH_REQUIRED
+  ERROR
+  DISCONNECTED
+  PENDING_APPROVAL
+}
+
+enum ConnectionHealthStatus {
+  HEALTHY
+  DEGRADED
+  AUTHENTICATION_REQUIRED
+  WEBHOOK_ERROR
+  RATE_LIMITED
+  DISCONNECTED
+}
+
+enum SocialEventType {
+  MESSAGE_RECEIVED
+  MESSAGE_SENT
+  CONVERSATION_CREATED
+  CONVERSATION_UPDATED
+  MEDIA_RECEIVED
+  PRODUCT_REFERENCE
+  LISTING_REFERENCE
+  ORDER_EVENT
+  WEBHOOK_VERIFICATION
+}
+
+enum EventProcessingStatus {
+  RECEIVED
+  PROCESSED
+  DUPLICATE
+  IGNORED
+  FAILED
+}
+
 model User {
   id              String           @id @default(uuid())
   email           String           @unique
@@ -304,6 +350,8 @@ model Business {
   socialTransactions SocialTransaction[]
   disputes       TransactionDispute[]
   channelListings ProductChannelListing[]
+  socialConnections SocialConnection[]
+  socialEvents      SocialEvent[]
 
   @@map("businesses")
 }
@@ -728,6 +776,8 @@ model SocialTransaction {
   @@index([conversationId])
   @@index([buyerUserId])
   @@index([publicTrackingToken])
+  @@index([externalConversationId])
+  @@index([externalUserId])
   @@map("social_transactions")
 }
 
@@ -816,4 +866,63 @@ model ProductChannelListing {
   @@index([businessId])
   @@index([platform])
   @@map("product_channel_listings")
+}
+
+model SocialConnection {
+  id                    String                 @id @default(uuid())
+  businessId            String
+  platform              SocialPlatform
+  accountIdentifier     String
+  accountName           String?
+  avatarUrl             String?
+  status                ConnectionStatus       @default(DISCONNECTED)
+  healthStatus          ConnectionHealthStatus @default(DISCONNECTED)
+  encryptedAccessToken  String?
+  encryptedRefreshToken String?
+  tokenExpiresAt        DateTime?
+  webhookSecret         String?
+  webhookVerified       Boolean                @default(false)
+  capabilities          Json?
+  metadata              Json?
+  lastSyncAt            DateTime?
+  lastWebhookAt         DateTime?
+  lastError             String?
+  connectedAt           DateTime?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  business              Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, platform, accountIdentifier])
+  @@index([businessId])
+  @@index([platform])
+  @@index([accountIdentifier])
+  @@map("social_connections")
+}
+
+model SocialEvent {
+  id                     String                @id @default(uuid())
+  businessId             String?
+  provider               SocialPlatform
+  externalEventId        String
+  eventType              SocialEventType       @default(MESSAGE_RECEIVED)
+  externalAccountId      String?
+  externalConversationId String?
+  externalMessageId      String?
+  externalUserId         String?
+  occurredAt             DateTime              @default(now())
+  processedAt            DateTime?
+  status                 EventProcessingStatus @default(RECEIVED)
+  errorMessage           String?
+  payload                Json?
+  createdAt              DateTime              @default(now())
+
+  business               Business?             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, externalEventId])
+  @@index([businessId])
+  @@index([provider])
+  @@index([externalEventId])
+  @@index([occurredAt])
+  @@map("social_events")
 }

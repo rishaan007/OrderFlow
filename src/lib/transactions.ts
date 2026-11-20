@@ -37,6 +37,10 @@ export function mapOrderSourceToSocialContext(source: OrderSource): {
       return { platform: SocialPlatform.INSTAGRAM, surface: SocialSurface.DM };
     case OrderSource.WHATSAPP:
       return { platform: SocialPlatform.WHATSAPP, surface: SocialSurface.DIRECT_CHAT };
+    case OrderSource.FACEBOOK:
+      return { platform: SocialPlatform.FACEBOOK, surface: SocialSurface.MESSENGER };
+    case OrderSource.X:
+      return { platform: SocialPlatform.X, surface: SocialSurface.X_DM };
     case OrderSource.ONLINE:
       return { platform: SocialPlatform.OTHER, surface: SocialSurface.EXTERNAL_LINK };
     case OrderSource.MANUAL:
@@ -501,6 +505,7 @@ export async function getSocialCommerceAnalytics(businessId: string) {
     INSTAGRAM: { count: 0, revenue: 0, completedCount: 0 },
     WHATSAPP: { count: 0, revenue: 0, completedCount: 0 },
     FACEBOOK: { count: 0, revenue: 0, completedCount: 0 },
+    X: { count: 0, revenue: 0, completedCount: 0 },
     MANUAL: { count: 0, revenue: 0, completedCount: 0 },
     OTHER: { count: 0, revenue: 0, completedCount: 0 },
   };

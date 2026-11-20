@@ -969,6 +969,7 @@ export function getTenantDb(businessId: string) {
       tax?: number;
       shippingAddress?: string | null;
       conversationId?: string | null;
+      socialTransactionId?: string | null;
       notes?: string | null;
       customerNotes?: string | null;
       requiresApproval?: boolean;
@@ -1150,43 +1151,56 @@ export function getTenantDb(businessId: string) {
 
         // 8. Canonical SocialTransaction integration
         try {
-          const socialContext = mapOrderSourceToSocialContext(order.source);
-          await tx.socialTransaction.create({
-            data: {
-              businessId,
-              orderId: order.id,
-              customerId: resolvedCustomerId,
-              conversationId: data.conversationId ?? null,
-              platform: socialContext.platform,
-              surface: socialContext.surface,
-              status:
-                order.paymentStatus === PaymentStatus.PAID
-                  ? TransactionStatus.PROCESSING
-                  : TransactionStatus.ORDER_CREATED,
-              timelineEvents: {
-                create: [
-                  {
-                    eventType: "ORDER_CREATED",
-                    title: `Order Created (${order.orderNumber})`,
-                    description: `Order total ${currency} ${order.totalAmount} placed via ${socialContext.platform} (${socialContext.surface})`,
-                    actor: TimelineActor.SELLER,
-                    visibility: TimelineVisibility.PUBLIC,
-                  },
-                ],
+          if (data.socialTransactionId) {
+            await tx.socialTransaction.update({
+              where: { id: data.socialTransactionId },
+              data: {
+                orderId: order.id,
+                status:
+                  order.paymentStatus === PaymentStatus.PAID
+                    ? TransactionStatus.PROCESSING
+                    : TransactionStatus.ORDER_CREATED,
               },
-              evidence: {
-                create: [
-                  {
-                    evidenceType: EvidenceType.ORDER_CONFIRMATION,
-                    verificationState: EvidenceVerificationState.SYSTEM_GENERATED,
-                    source: "ORDER_CHECKOUT",
-                    actor: TimelineActor.SYSTEM,
-                    notes: `Generated order number ${order.orderNumber}`,
-                  },
-                ],
+            });
+          } else {
+            const socialContext = mapOrderSourceToSocialContext(order.source);
+            await tx.socialTransaction.create({
+              data: {
+                businessId,
+                orderId: order.id,
+                customerId: resolvedCustomerId,
+                conversationId: data.conversationId ?? null,
+                platform: socialContext.platform,
+                surface: socialContext.surface,
+                status:
+                  order.paymentStatus === PaymentStatus.PAID
+                    ? TransactionStatus.PROCESSING
+                    : TransactionStatus.ORDER_CREATED,
+                timelineEvents: {
+                  create: [
+                    {
+                      eventType: "ORDER_CREATED",
+                      title: `Order Created (${order.orderNumber})`,
+                      description: `Order total ${currency} ${order.totalAmount} placed via ${socialContext.platform} (${socialContext.surface})`,
+                      actor: TimelineActor.SELLER,
+                      visibility: TimelineVisibility.PUBLIC,
+                    },
+                  ],
+                },
+                evidence: {
+                  create: [
+                    {
+                      evidenceType: EvidenceType.ORDER_CONFIRMATION,
+                      verificationState: EvidenceVerificationState.SYSTEM_GENERATED,
+                      source: "ORDER_CHECKOUT",
+                      actor: TimelineActor.SYSTEM,
+                      notes: `Generated order number ${order.orderNumber}`,
+                    },
+                  ],
+                },
               },
-            },
-          });
+            });
+          }
         } catch {
           // Non-blocking fallback for existing historical transactions
         }
@@ -2042,7 +2056,10 @@ export function getTenantDb(businessId: string) {
       const channelSourceMap: Record<ConversationChannel, OrderSource> = {
         [ConversationChannel.WHATSAPP]: OrderSource.WHATSAPP,
         [ConversationChannel.INSTAGRAM]: OrderSource.INSTAGRAM,
+        [ConversationChannel.FACEBOOK]: OrderSource.FACEBOOK,
+        [ConversationChannel.X]: OrderSource.X,
         [ConversationChannel.MANUAL]: OrderSource.MANUAL,
+        [ConversationChannel.OTHER]: OrderSource.ONLINE,
       };
 
       // 4. Create the Order with automatic calculations & stock deduction
