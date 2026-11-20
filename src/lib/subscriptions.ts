@@ -151,15 +151,7 @@ export async function assertCanCreateOrder(businessId: string): Promise<void> {
   }
 }
 
-  const usage = await getSubscriptionUsage(businessId);
-  if (process.env.NODE_ENV === "test") {
-    // Skip quota enforcement in test environment
-    return;
-  }
-  if (!usage.canCreateOrder) {
-    throw new PlanLimitExceededError("order", usage.ordersUsed, usage.ordersLimit);
-  }
-}
+
 
 export async function assertCanAddMember(businessId: string): Promise<void> {
   const usage = await getSubscriptionUsage(businessId);
