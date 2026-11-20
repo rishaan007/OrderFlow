@@ -15,6 +15,15 @@ import {
   AutomationJobType,
   JobStatus,
   NotificationStatus,
+  SocialPlatform,
+  SocialSurface,
+  TransactionStatus,
+  TimelineVisibility,
+  TimelineActor,
+  EvidenceType,
+  EvidenceVerificationState,
+  DisputeStatus,
+  ChannelSyncStatus,
 } from "@prisma/client";
 
 export {
@@ -34,6 +43,15 @@ export {
   AutomationJobType,
   JobStatus,
   NotificationStatus,
+  SocialPlatform,
+  SocialSurface,
+  TransactionStatus,
+  TimelineVisibility,
+  TimelineActor,
+  EvidenceType,
+  EvidenceVerificationState,
+  DisputeStatus,
+  ChannelSyncStatus,
 };
 
 export interface SessionUser {
@@ -115,12 +133,24 @@ export interface DashboardStatsResponse {
     formattedAmount: string;
     createdAt: string;
     requiresApproval: boolean;
+    trackingToken?: string | null;
+    platform?: string | null;
+    surface?: string | null;
   }[];
   businessInfo: {
     name: string;
     slug: string;
     currency: string;
     isFullyConfigured: boolean;
+  };
+  socialCommerce?: {
+    platformBreakdown: Record<string, { count: number; revenue: number; completedCount: number }>;
+    totalTransactions: number;
+  };
+  attentionRequired?: {
+    pendingPaymentVerifications: number;
+    openDisputes: number;
+    lowStockItems: number;
   };
 }
 
@@ -473,3 +503,244 @@ export interface UpdateShipmentStatusInput {
   failureReason?: string | null;
   notes?: string | null;
 }
+
+// ==========================================
+// Social Commerce & Transaction OS Types
+// ==========================================
+
+export interface TransactionTimelineEventItem {
+  id: string;
+  transactionId: string;
+  eventType: string;
+  title: string;
+  description?: string | null;
+  actor: TimelineActor;
+  visibility: TimelineVisibility;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface TransactionEvidenceItem {
+  id: string;
+  transactionId: string;
+  evidenceType: EvidenceType;
+  verificationState: EvidenceVerificationState;
+  source: string;
+  actor: TimelineActor;
+  mediaUrl?: string | null;
+  notes?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface TransactionDisputeItem {
+  id: string;
+  transactionId: string;
+  orderId?: string | null;
+  businessId: string;
+  reason: string;
+  status: DisputeStatus;
+  refundAmount?: number | null;
+  buyerNotes?: string | null;
+  sellerResponse?: string | null;
+  resolutionNotes?: string | null;
+  evidenceUrls: string[];
+  resolvedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductChannelListingItem {
+  id: string;
+  productId: string;
+  businessId: string;
+  platform: SocialPlatform;
+  externalListingId?: string | null;
+  platformTitle?: string | null;
+  platformPrice?: number | null;
+  syncStatus: ChannelSyncStatus;
+  lastSyncAt?: string | null;
+  syncError?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SocialTransactionResponse {
+  id: string;
+  businessId: string;
+  orderId?: string | null;
+  customerId?: string | null;
+  conversationId?: string | null;
+  platform: SocialPlatform;
+  surface: SocialSurface;
+  status: TransactionStatus;
+  publicTrackingToken: string;
+  externalUserId?: string | null;
+  externalConversationId?: string | null;
+  externalListingId?: string | null;
+  externalPostId?: string | null;
+  sourceUrl?: string | null;
+  metadata?: Record<string, unknown> | null;
+  buyerNotes?: string | null;
+  sellerNotes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  order?: {
+    id: string;
+    orderNumber: string;
+    status: OrderStatus;
+    paymentStatus: PaymentStatus;
+    totalAmount: number;
+    amountPaid: number;
+    currency: string;
+    items: {
+      id: string;
+      title: string;
+      variantTitle?: string | null;
+      quantity: number;
+      unitPrice: number;
+      totalPrice: number;
+    }[];
+    shipments: {
+      id: string;
+      carrier: DeliveryPartner;
+      trackingNumber?: string | null;
+      trackingUrl?: string | null;
+      status: ShipmentStatus;
+    }[];
+    payments: {
+      id: string;
+      amount: number;
+      method: PaymentMethod;
+      status: PaymentRecordStatus;
+      createdAt: string;
+    }[];
+  } | null;
+  customer?: {
+    id: string;
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    instagramHandle?: string | null;
+  } | null;
+  timelineEvents?: TransactionTimelineEventItem[];
+  evidence?: TransactionEvidenceItem[];
+  disputes?: TransactionDisputeItem[];
+}
+
+/**
+ * Public, sanitized projection safe for buyer-facing room /t/[token].
+ * Strictly excludes private seller notes, margins, internal system logs.
+ */
+export interface PublicTransactionResponse {
+  id: string;
+  publicTrackingToken: string;
+  platform: SocialPlatform;
+  surface: SocialSurface;
+  status: TransactionStatus;
+  createdAt: string;
+  updatedAt: string;
+  seller: {
+    name: string;
+    slug: string;
+    currency: string;
+    logoUrl?: string | null;
+    instagramHandle?: string | null;
+    whatsappNumber?: string | null;
+    metrics?: {
+      completedOrdersCount: number;
+      deliveryFulfillmentRate: number; // e.g. 98.5%
+      verifiedPaymentRate: number;
+      isVerifiedSeller: boolean;
+    };
+  };
+  order?: {
+    orderNumber: string;
+    status: OrderStatus;
+    paymentStatus: PaymentStatus;
+    totalAmount: number;
+    amountPaid: number;
+    currency: string;
+    shippingAddress?: string | null;
+    items: {
+      title: string;
+      variantTitle?: string | null;
+      quantity: number;
+      unitPrice: number;
+      totalPrice: number;
+    }[];
+    payments: {
+      amount: number;
+      method: PaymentMethod;
+      status: PaymentRecordStatus;
+      createdAt: string;
+    }[];
+    shipment?: {
+      carrier: DeliveryPartner;
+      trackingNumber?: string | null;
+      trackingUrl?: string | null;
+      status: ShipmentStatus;
+      estimatedDelivery?: string | null;
+      actualDelivery?: string | null;
+    } | null;
+  } | null;
+  timeline: {
+    title: string;
+    description?: string | null;
+    actor: TimelineActor;
+    createdAt: string;
+  }[];
+  evidence: {
+    evidenceType: EvidenceType;
+    verificationState: EvidenceVerificationState;
+    mediaUrl?: string | null;
+    notes?: string | null;
+    createdAt: string;
+  }[];
+  disputes: {
+    id: string;
+    reason: string;
+    status: DisputeStatus;
+    buyerNotes?: string | null;
+    sellerResponse?: string | null;
+    createdAt: string;
+  }[];
+}
+
+export interface IntentClassification {
+  primaryIntent:
+    | "BUYING_INTENT"
+    | "PRODUCT_QUESTION"
+    | "PRICE_QUESTION"
+    | "STOCK_QUESTION"
+    | "SIZE_QUESTION"
+    | "DELIVERY_QUESTION"
+    | "PAYMENT_SENT"
+    | "ORDER_CONFIRMATION"
+    | "CANCELLATION"
+    | "RETURN_REQUEST"
+    | "REFUND_REQUEST"
+    | "COMPLAINT"
+    | "SUPPORT"
+    | "SPAM";
+  confidence: number; // 0.0 to 1.0
+  secondaryIntents?: string[];
+  extractedEntities: {
+    productMentions: string[];
+    quantities: number[];
+    deliveryLocation?: string;
+    paymentReference?: string;
+    phone?: string;
+    address?: string;
+  };
+  missingFields: string[];
+}
+
+export type {
+  CreateSocialTransactionInput,
+  CreateTimelineEventInput,
+  AddEvidenceInput,
+  CreateDisputeInput,
+  UpdateDisputeInput,
+  UpsertChannelListingInput,
+} from "@/lib/validations";

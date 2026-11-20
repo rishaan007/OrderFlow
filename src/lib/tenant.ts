@@ -20,7 +20,16 @@ import {
   SubscriptionStatus,
   InvitationStatus,
   Prisma,
+  SocialPlatform,
+  SocialSurface,
+  TransactionStatus,
+  TimelineVisibility,
+  TimelineActor,
+  EvidenceType,
+  EvidenceVerificationState,
+  DisputeStatus,
 } from "@prisma/client";
+import { mapOrderSourceToSocialContext } from "./transactions";
 import { extractOrderDetails } from "./order-extraction";
 import { queueAutomationJob, processPendingAutomationJobs } from "./automation";
 import {
@@ -1139,6 +1148,49 @@ export function getTenantDb(businessId: string) {
           });
         }
 
+        // 8. Canonical SocialTransaction integration
+        try {
+          const socialContext = mapOrderSourceToSocialContext(order.source);
+          await tx.socialTransaction.create({
+            data: {
+              businessId,
+              orderId: order.id,
+              customerId: resolvedCustomerId,
+              conversationId: data.conversationId ?? null,
+              platform: socialContext.platform,
+              surface: socialContext.surface,
+              status:
+                order.paymentStatus === PaymentStatus.PAID
+                  ? TransactionStatus.PROCESSING
+                  : TransactionStatus.ORDER_CREATED,
+              timelineEvents: {
+                create: [
+                  {
+                    eventType: "ORDER_CREATED",
+                    title: `Order Created (${order.orderNumber})`,
+                    description: `Order total ${currency} ${order.totalAmount} placed via ${socialContext.platform} (${socialContext.surface})`,
+                    actor: TimelineActor.SELLER,
+                    visibility: TimelineVisibility.PUBLIC,
+                  },
+                ],
+              },
+              evidence: {
+                create: [
+                  {
+                    evidenceType: EvidenceType.ORDER_CONFIRMATION,
+                    verificationState: EvidenceVerificationState.SYSTEM_GENERATED,
+                    source: "ORDER_CHECKOUT",
+                    actor: TimelineActor.SYSTEM,
+                    notes: `Generated order number ${order.orderNumber}`,
+                  },
+                ],
+              },
+            },
+          });
+        } catch {
+          // Non-blocking fallback for existing historical transactions
+        }
+
         return order;
       });
     },
@@ -1314,6 +1366,8 @@ export function getTenantDb(businessId: string) {
         recentOrders,
         business,
         lowStockCount,
+        unverifiedPaymentsCount,
+        openDisputesCount,
       ] = await Promise.all([
         prisma.order.aggregate({
           where: {
@@ -1342,8 +1396,11 @@ export function getTenantDb(businessId: string) {
             customer: {
               select: { name: true, phone: true, email: true },
             },
+            socialTransaction: {
+              select: { publicTrackingToken: true, platform: true, surface: true },
+            },
           },
-          take: 5,
+          take: 6,
           orderBy: { createdAt: "desc" },
         }),
         prisma.business.findUnique({
@@ -1357,7 +1414,49 @@ export function getTenantDb(businessId: string) {
             stockQuantity: { lte: 5 },
           },
         }),
+        prisma.payment.count({
+          where: {
+            businessId,
+            status: PaymentRecordStatus.PENDING_VERIFICATION,
+          },
+        }),
+        prisma.transactionDispute.count({
+          where: {
+            businessId,
+            status: { in: [DisputeStatus.REQUESTED, DisputeStatus.UNDER_REVIEW] },
+          },
+        }),
       ]);
+
+      const [socialAnalytics] = await Promise.all([
+        prisma.socialTransaction.findMany({
+          where: { businessId },
+          include: {
+            order: {
+              select: { totalAmount: true, status: true },
+            },
+          },
+        }),
+      ]);
+
+      const platformBreakdown: Record<string, { count: number; revenue: number; completedCount: number }> = {
+        INSTAGRAM: { count: 0, revenue: 0, completedCount: 0 },
+        WHATSAPP: { count: 0, revenue: 0, completedCount: 0 },
+        FACEBOOK: { count: 0, revenue: 0, completedCount: 0 },
+        MANUAL: { count: 0, revenue: 0, completedCount: 0 },
+      };
+
+      for (const st of socialAnalytics) {
+        const plat = st.platform;
+        const total = st.order ? Number(st.order.totalAmount) : 0;
+        const isCompleted = st.order?.status === OrderStatus.DELIVERED || st.status === TransactionStatus.COMPLETED;
+        if (!platformBreakdown[plat]) {
+          platformBreakdown[plat] = { count: 0, revenue: 0, completedCount: 0 };
+        }
+        platformBreakdown[plat].count += 1;
+        platformBreakdown[plat].revenue += total;
+        if (isCompleted) platformBreakdown[plat].completedCount += 1;
+      }
 
       const revenueValue = Number(totalRevenueResult._sum.totalAmount ?? 0);
       const currency = business?.currency ?? "USD";
@@ -1401,6 +1500,9 @@ export function getTenantDb(businessId: string) {
           }).format(Number(o.totalAmount)),
           createdAt: o.createdAt.toISOString(),
           requiresApproval: o.requiresApproval,
+          trackingToken: o.socialTransaction?.publicTrackingToken || null,
+          platform: o.socialTransaction?.platform || null,
+          surface: o.socialTransaction?.surface || null,
         })),
         businessInfo: {
           name: business?.name ?? "My Business",
@@ -1409,6 +1511,15 @@ export function getTenantDb(businessId: string) {
           isFullyConfigured: Boolean(
             business?.profile?.whatsappNumber || business?.profile?.instagramHandle
           ),
+        },
+        socialCommerce: {
+          platformBreakdown,
+          totalTransactions: socialAnalytics.length,
+        },
+        attentionRequired: {
+          pendingPaymentVerifications: unverifiedPaymentsCount,
+          openDisputes: openDisputesCount,
+          lowStockItems: lowStockCount,
         },
       };
     },
@@ -2285,6 +2396,44 @@ export function getTenantDb(businessId: string) {
             },
           });
 
+          // Social Transaction synchronization
+          try {
+            const socialTx = await tx.socialTransaction.findUnique({
+              where: { orderId: payment.orderId },
+            });
+            if (socialTx) {
+              await tx.transactionTimelineEvent.create({
+                data: {
+                  transactionId: socialTx.id,
+                  eventType: "PAYMENT_VERIFIED",
+                  title: `Payment Verified: ${payment.currency} ${payAmount}`,
+                  description: `Verified via ${payment.method}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ""}`,
+                  actor: TimelineActor.SELLER,
+                  visibility: TimelineVisibility.PUBLIC,
+                },
+              });
+              await tx.transactionEvidence.create({
+                data: {
+                  transactionId: socialTx.id,
+                  evidenceType: EvidenceType.PAYMENT_VERIFICATION,
+                  verificationState: EvidenceVerificationState.SELLER_CONFIRMED,
+                  source: "PAYMENT_GATEWAY",
+                  actor: TimelineActor.SELLER,
+                  mediaUrl: payment.screenshotUrl,
+                  notes: `Verified payment record ${payment.id}`,
+                },
+              });
+              if (newPaymentStatus === PaymentStatus.PAID) {
+                await tx.socialTransaction.update({
+                  where: { id: socialTx.id },
+                  data: { status: TransactionStatus.PAYMENT_VERIFIED },
+                });
+              }
+            }
+          } catch {
+            // Non-blocking fallback
+          }
+
           return updatedPayment;
         } else {
           // REJECT
@@ -2518,6 +2667,44 @@ export function getTenantDb(businessId: string) {
           },
         });
 
+        // Social Transaction synchronization
+        try {
+          const socialTx = await tx.socialTransaction.findUnique({
+            where: { orderId },
+          });
+          if (socialTx) {
+            await tx.transactionTimelineEvent.create({
+              data: {
+                transactionId: socialTx.id,
+                eventType: "SHIPMENT_DISPATCHED",
+                title: `Shipment Created via ${carrier}`,
+                description: data.trackingNumber
+                  ? `Tracking Number: ${data.trackingNumber} (${carrier})`
+                  : `Dispatched with carrier ${carrier}`,
+                actor: TimelineActor.CARRIER,
+                visibility: TimelineVisibility.PUBLIC,
+              },
+            });
+            await tx.transactionEvidence.create({
+              data: {
+                transactionId: socialTx.id,
+                evidenceType: EvidenceType.CARRIER_TRACKING,
+                verificationState: EvidenceVerificationState.SYSTEM_GENERATED,
+                source: "CARRIER_INTEGRATION",
+                actor: TimelineActor.CARRIER,
+                mediaUrl: data.trackingUrl,
+                notes: `Carrier: ${carrier}, Tracking: ${data.trackingNumber || "N/A"}`,
+              },
+            });
+            await tx.socialTransaction.update({
+              where: { id: socialTx.id },
+              data: { status: TransactionStatus.DISPATCHED },
+            });
+          }
+        } catch {
+          // Non-blocking fallback
+        }
+
         return shipment;
       });
     },
@@ -2609,6 +2796,43 @@ export function getTenantDb(businessId: string) {
             },
           },
         });
+
+        // Social Transaction synchronization
+        try {
+          const socialTx = await tx.socialTransaction.findUnique({
+            where: { orderId: shipment.orderId },
+          });
+          if (socialTx) {
+            await tx.transactionTimelineEvent.create({
+              data: {
+                transactionId: socialTx.id,
+                eventType: `SHIPMENT_${data.status}`,
+                title: `Shipment Status: ${data.status.replace(/_/g, " ")}`,
+                description: data.failureReason || `Shipment updated to ${data.status}`,
+                actor: TimelineActor.CARRIER,
+                visibility: TimelineVisibility.PUBLIC,
+              },
+            });
+            if (isDelivered) {
+              await tx.transactionEvidence.create({
+                data: {
+                  transactionId: socialTx.id,
+                  evidenceType: EvidenceType.DELIVERY_CONFIRMATION,
+                  verificationState: EvidenceVerificationState.SYSTEM_GENERATED,
+                  source: "CARRIER_DISPATCH",
+                  actor: TimelineActor.CARRIER,
+                  notes: "Carrier confirmed package delivered",
+                },
+              });
+              await tx.socialTransaction.update({
+                where: { id: socialTx.id },
+                data: { status: TransactionStatus.DELIVERED },
+              });
+            }
+          }
+        } catch {
+          // Non-blocking fallback
+        }
 
         return updated;
       });

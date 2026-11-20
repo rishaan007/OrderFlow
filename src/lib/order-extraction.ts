@@ -343,3 +343,153 @@ export function extractOrderDetails(
     duplicateWarning,
   };
 }
+
+/**
+ * Classifies customer intention and extracts intent confidence & missing fields
+ */
+export function classifySocialIntent(
+  messages: MessageInput[]
+): {
+  primaryIntent:
+    | "BUYING_INTENT"
+    | "PRODUCT_QUESTION"
+    | "PRICE_QUESTION"
+    | "STOCK_QUESTION"
+    | "SIZE_QUESTION"
+    | "DELIVERY_QUESTION"
+    | "PAYMENT_SENT"
+    | "ORDER_CONFIRMATION"
+    | "CANCELLATION"
+    | "RETURN_REQUEST"
+    | "REFUND_REQUEST"
+    | "COMPLAINT"
+    | "SUPPORT"
+    | "SPAM";
+  confidence: number;
+  extractedEntities: {
+    productMentions: string[];
+    quantities: number[];
+    deliveryLocation?: string;
+    paymentReference?: string;
+    phone?: string;
+    address?: string;
+  };
+  missingFields: string[];
+} {
+  const customerMessages = messages.filter((m) => m.senderType === "CUSTOMER");
+  const rawText =
+    customerMessages.map((m) => m.content).join(" ") ||
+    messages.map((m) => m.content).join(" ");
+  const fullText = rawText.toLowerCase();
+
+  const missingFields: string[] = [];
+
+  // Check for payment confirmation / screenshot proof
+  const hasProof = messages.some(
+    (m) =>
+      m.messageType === "PAYMENT_PROOF" ||
+      (m.senderType === "CUSTOMER" && !!m.mediaUrl)
+  );
+
+  if (
+    hasProof ||
+    /(?:paid|payment done|sent the money|transferred|utr|screenshot attached|gpay done|phonepe done)/i.test(
+      fullText
+    )
+  ) {
+    const utrMatch = rawText.match(/\b(?:utr|ref|txn|id)[:\s-]*([a-z0-9]{8,22})\b/i);
+    return {
+      primaryIntent: "PAYMENT_SENT",
+      confidence: 0.95,
+      extractedEntities: {
+        productMentions: [],
+        quantities: [],
+        paymentReference: utrMatch ? utrMatch[1] : undefined,
+      },
+      missingFields: [],
+    };
+  }
+
+  // Check return / refund requests
+  if (/(?:return|refund|damaged item|wrong size delivered|exchange)/i.test(fullText)) {
+    return {
+      primaryIntent: "RETURN_REQUEST",
+      confidence: 0.9,
+      extractedEntities: {
+        productMentions: [],
+        quantities: [],
+      },
+      missingFields: ["reason", "evidence"],
+    };
+  }
+
+  // Check cancellation
+  if (/(?:cancel my order|don't want this anymore|please cancel)/i.test(fullText)) {
+    return {
+      primaryIntent: "CANCELLATION",
+      confidence: 0.88,
+      extractedEntities: { productMentions: [], quantities: [] },
+      missingFields: [],
+    };
+  }
+
+  // Check buying intent
+  if (
+    /(?:i want to buy|book this|place order|how to order|send this to|deliver to|need \d+|interested in buying)/i.test(
+      fullText
+    )
+  ) {
+    const addressMatch = rawText.match(/(?:address|ship to|deliver to|send to)\s*[:=-]?\s*([a-zA-Z0-9\s,.-]{10,80})/i);
+    if (!addressMatch) missingFields.push("shippingAddress");
+
+    return {
+      primaryIntent: "BUYING_INTENT",
+      confidence: 0.92,
+      extractedEntities: {
+        productMentions: [],
+        quantities: [1],
+        address: addressMatch ? addressMatch[1].trim() : undefined,
+      },
+      missingFields,
+    };
+  }
+
+  // Check price question
+  if (/(?:how much|price|cost|rate|kitna|discount|offer)/i.test(fullText)) {
+    return {
+      primaryIntent: "PRICE_QUESTION",
+      confidence: 0.85,
+      extractedEntities: { productMentions: [], quantities: [] },
+      missingFields: [],
+    };
+  }
+
+  // Check stock question
+  if (/(?:available|in stock|ready stock|out of stock|still available)/i.test(fullText)) {
+    return {
+      primaryIntent: "STOCK_QUESTION",
+      confidence: 0.84,
+      extractedEntities: { productMentions: [], quantities: [] },
+      missingFields: [],
+    };
+  }
+
+  // Check delivery question
+  if (/(?:delivery time|when will it reach|cod available|shipping charge|courier)/i.test(fullText)) {
+    return {
+      primaryIntent: "DELIVERY_QUESTION",
+      confidence: 0.82,
+      extractedEntities: { productMentions: [], quantities: [] },
+      missingFields: [],
+    };
+  }
+
+  // Default support / product inquiry
+  return {
+    primaryIntent: "PRODUCT_QUESTION",
+    confidence: 0.65,
+    extractedEntities: { productMentions: [], quantities: [] },
+    missingFields: [],
+  };
+}
+
