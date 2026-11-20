@@ -295,3 +295,151 @@ export type RecordPaymentInput = z.infer<typeof recordPaymentSchema>;
 export type VerifyPaymentInput = z.infer<typeof verifyPaymentSchema>;
 export type CreateShipmentInput = z.infer<typeof createShipmentSchema>;
 export type UpdateShipmentStatusInput = z.infer<typeof updateShipmentStatusSchema>;
+
+// --- Social Commerce & Transaction OS Schemas ---
+
+export const socialPlatformEnum = z.enum([
+  "INSTAGRAM",
+  "FACEBOOK",
+  "WHATSAPP",
+  "TIKTOK",
+  "TELEGRAM",
+  "OTHER",
+  "MANUAL",
+]);
+
+export const socialSurfaceEnum = z.enum([
+  "DM",
+  "POST",
+  "STORY",
+  "REEL",
+  "SHOP",
+  "MARKETPLACE",
+  "MESSENGER",
+  "PAGE",
+  "DIRECT_CHAT",
+  "BUSINESS_PROFILE",
+  "CATALOG",
+  "MANUAL_ENTRY",
+  "EXTERNAL_LINK",
+  "OTHER",
+]);
+
+export const transactionStatusEnum = z.enum([
+  "INQUIRY",
+  "INTENT_CONFIRMED",
+  "ORDER_CREATED",
+  "PAYMENT_PENDING",
+  "PAYMENT_VERIFIED",
+  "PROCESSING",
+  "DISPATCHED",
+  "IN_TRANSIT",
+  "DELIVERED",
+  "COMPLETED",
+  "DISPUTED",
+  "REFUNDED",
+  "CANCELLED",
+]);
+
+export const createSocialTransactionSchema = z.object({
+  orderId: z.string().optional().nullable(),
+  customerId: z.string().optional().nullable(),
+  conversationId: z.string().optional().nullable(),
+  platform: socialPlatformEnum.default("MANUAL"),
+  surface: socialSurfaceEnum.default("MANUAL_ENTRY"),
+  status: transactionStatusEnum.default("INQUIRY"),
+  externalUserId: z.string().optional().nullable(),
+  externalConversationId: z.string().optional().nullable(),
+  externalListingId: z.string().optional().nullable(),
+  externalPostId: z.string().optional().nullable(),
+  sourceUrl: z.string().url().optional().nullable().or(z.literal("")),
+  buyerNotes: z.string().optional().nullable(),
+  sellerNotes: z.string().optional().nullable(),
+  metadata: z.record(z.unknown()).optional().nullable(),
+});
+
+export const updateSocialTransactionSchema = createSocialTransactionSchema.partial();
+
+export const createTimelineEventSchema = z.object({
+  eventType: z.string().min(1, "Event type is required"),
+  title: z.string().min(1, "Event title is required"),
+  description: z.string().optional().nullable(),
+  actor: z.enum(["BUYER", "SELLER", "SYSTEM", "CARRIER"]).default("SYSTEM"),
+  visibility: z.enum(["PUBLIC", "INTERNAL_ONLY"]).default("PUBLIC"),
+  metadata: z.record(z.unknown()).optional().nullable(),
+});
+
+export const addEvidenceSchema = z.object({
+  evidenceType: z.enum([
+    "ORIGINAL_MESSAGE",
+    "ORDER_CONFIRMATION",
+    "PAYMENT_PROOF",
+    "PAYMENT_VERIFICATION",
+    "SHIPMENT_CREATION",
+    "CARRIER_TRACKING",
+    "DELIVERY_CONFIRMATION",
+    "BUYER_CONFIRMATION",
+    "SELLER_CONFIRMATION",
+    "RETURN_REQUEST",
+    "REFUND_RECORD",
+    "DISPUTE_EVIDENCE",
+  ]),
+  verificationState: z
+    .enum([
+      "OBSERVED",
+      "USER_PROVIDED",
+      "SELLER_CONFIRMED",
+      "BUYER_CONFIRMED",
+      "SYSTEM_GENERATED",
+      "REJECTED",
+    ])
+    .default("OBSERVED"),
+  source: z.string().default("MANUAL_UPLOAD"),
+  actor: z.enum(["BUYER", "SELLER", "SYSTEM", "CARRIER"]).default("SYSTEM"),
+  mediaUrl: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+  metadata: z.record(z.unknown()).optional().nullable(),
+});
+
+export const createDisputeSchema = z.object({
+  reason: z.string().min(3, "Reason must be at least 3 characters").max(500),
+  refundAmount: z.coerce.number().min(0).optional().nullable(),
+  buyerNotes: z.string().optional().nullable(),
+  evidenceUrls: z.array(z.string()).default([]),
+});
+
+export const updateDisputeSchema = z.object({
+  status: z.enum([
+    "REQUESTED",
+    "UNDER_REVIEW",
+    "APPROVED",
+    "REJECTED",
+    "RETURN_IN_TRANSIT",
+    "RETURN_RECEIVED",
+    "REFUND_PENDING",
+    "REFUNDED",
+    "CLOSED",
+  ]),
+  sellerResponse: z.string().optional().nullable(),
+  resolutionNotes: z.string().optional().nullable(),
+  refundAmount: z.coerce.number().min(0).optional().nullable(),
+});
+
+export const upsertChannelListingSchema = z.object({
+  productId: z.string().uuid("Valid product ID required"),
+  platform: socialPlatformEnum,
+  externalListingId: z.string().optional().nullable(),
+  platformTitle: z.string().optional().nullable(),
+  platformPrice: z.coerce.number().min(0).optional().nullable(),
+  syncStatus: z
+    .enum(["SYNCED", "PENDING", "FAILED", "NOT_SUPPORTED", "MANUAL_REQUIRED"])
+    .default("PENDING"),
+  syncError: z.string().optional().nullable(),
+});
+
+export type CreateSocialTransactionInput = z.infer<typeof createSocialTransactionSchema>;
+export type CreateTimelineEventInput = z.infer<typeof createTimelineEventSchema>;
+export type AddEvidenceInput = z.infer<typeof addEvidenceSchema>;
+export type CreateDisputeInput = z.infer<typeof createDisputeSchema>;
+export type UpdateDisputeInput = z.infer<typeof updateDisputeSchema>;
+export type UpsertChannelListingInput = z.infer<typeof upsertChannelListingSchema>;

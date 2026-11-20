@@ -13,9 +13,13 @@ import {
   ExternalLink,
   MessageSquare,
   Instagram,
-  AlertCircle,
   CheckCircle2,
   Package,
+  AlertTriangle,
+  Share2,
+  ShieldCheck,
+  CreditCard,
+  Layers,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -55,24 +59,39 @@ export default function DashboardPage() {
     fetchStats();
   }, []);
 
-  const getSourceBadge = (source: string) => {
+  const getSourceBadge = (source: string, surface?: string | null) => {
+    const surfaceTag = surface ? surface.replace(/_/g, " ").toLowerCase() : null;
+
     switch (source) {
       case "INSTAGRAM":
         return (
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-pink-700 bg-pink-50 border border-pink-200 px-2 py-0.5 rounded">
-            <Instagram className="h-3 w-3" /> Instagram
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-pink-700 bg-pink-50 border border-pink-200 px-2 py-0.5 rounded-md">
+            <Instagram className="h-3 w-3" />
+            <span>Instagram</span>
+            {surfaceTag && <span className="text-[10px] opacity-75 font-mono">({surfaceTag})</span>}
           </span>
         );
       case "WHATSAPP":
         return (
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-            <MessageSquare className="h-3 w-3" /> WhatsApp
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+            <MessageSquare className="h-3 w-3" />
+            <span>WhatsApp</span>
+            {surfaceTag && <span className="text-[10px] opacity-75 font-mono">({surfaceTag})</span>}
+          </span>
+        );
+      case "FACEBOOK":
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+            <Layers className="h-3 w-3" />
+            <span>Facebook</span>
+            {surfaceTag && <span className="text-[10px] opacity-75 font-mono">({surfaceTag})</span>}
           </span>
         );
       default:
         return (
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-surface-600 bg-surface-100 border border-surface-200 px-2 py-0.5 rounded">
-            Direct / Manual
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-surface-600 bg-surface-100 border border-surface-200 px-2 py-0.5 rounded-md">
+            <span>Direct</span>
+            {surfaceTag && <span className="text-[10px] opacity-75 font-mono">({surfaceTag})</span>}
           </span>
         );
     }
@@ -123,11 +142,16 @@ export default function DashboardPage() {
       {/* Page Title & Quick Actions */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-surface-900 sm:text-3xl">
-            Store Overview
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold tracking-tight text-surface-900 sm:text-3xl">
+              Social Commerce Command Center
+            </h1>
+            <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-semibold text-brand-700 border border-brand-200">
+              <ShieldCheck className="h-3 w-3" /> Transaction OS
+            </span>
+          </div>
           <p className="mt-1 text-sm text-surface-500">
-            Real-time sales, order pipeline, and customer activity
+            Canonical transactions across Instagram, WhatsApp, Facebook, and direct commerce
           </p>
         </div>
 
@@ -187,32 +211,44 @@ export default function DashboardPage() {
       {/* Success State */}
       {data && (
         <>
-          {/* Channel Setup Checklist (Shown if not fully configured) */}
-          {!data.businessInfo.isFullyConfigured && (
-            <div className="rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50/80 to-indigo-50/50 p-5">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm mt-0.5">
-                    <CheckCircle2 className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-blue-950">
-                      Complete Channel Configuration
-                    </h3>
-                    <p className="text-xs text-blue-800/80 mt-0.5 max-w-xl">
-                      Add your Instagram and WhatsApp handles to activate unified conversation
-                      inbox and order draft extraction.
-                    </p>
-                  </div>
+          {/* Attention Required Section (if any actions pending) */}
+          {data.attentionRequired &&
+            (data.attentionRequired.pendingPaymentVerifications > 0 ||
+              data.attentionRequired.openDisputes > 0 ||
+              data.attentionRequired.lowStockItems > 0) && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+                <div className="flex items-center gap-2 mb-2 font-semibold text-amber-900 text-sm">
+                  <AlertTriangle className="h-4 w-4 text-amber-600" />
+                  <span>Immediate Action Required</span>
                 </div>
-                <Link href="/settings">
-                  <Button size="sm" variant="default" className="shrink-0 bg-blue-700 hover:bg-blue-800">
-                    Configure Profile & Channels
-                  </Button>
-                </Link>
+                <div className="flex flex-wrap items-center gap-3">
+                  {data.attentionRequired.pendingPaymentVerifications > 0 && (
+                    <Link
+                      href="/orders?paymentStatus=PENDING"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-800 bg-white border border-amber-300 px-3 py-1 rounded-lg hover:bg-amber-100 transition-colors shadow-2xs"
+                    >
+                      <CreditCard className="h-3.5 w-3.5 text-amber-600" />
+                      <span>{data.attentionRequired.pendingPaymentVerifications} Payment(s) Pending Verification</span>
+                    </Link>
+                  )}
+                  {data.attentionRequired.openDisputes > 0 && (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-800 bg-white border border-red-300 px-3 py-1 rounded-lg shadow-2xs">
+                      <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
+                      <span>{data.attentionRequired.openDisputes} Active Buyer Dispute(s)</span>
+                    </span>
+                  )}
+                  {data.attentionRequired.lowStockItems > 0 && (
+                    <Link
+                      href="/products"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-surface-800 bg-white border border-surface-300 px-3 py-1 rounded-lg hover:bg-surface-50 transition-colors shadow-2xs"
+                    >
+                      <Package className="h-3.5 w-3.5 text-amber-600" />
+                      <span>{data.attentionRequired.lowStockItems} Low Stock Item(s)</span>
+                    </Link>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           {/* Key Metrics Grid */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -234,7 +270,7 @@ export default function DashboardPage() {
                   <span className="text-emerald-600 font-medium inline-flex items-center">
                     +{data.metrics.totalRevenue.changePercentage}%
                   </span>
-                  <span>from paid orders</span>
+                  <span>from verified paid transactions</span>
                 </p>
               </CardContent>
             </Card>
@@ -243,7 +279,7 @@ export default function DashboardPage() {
             <Card className="border-surface-200 shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-surface-500">
-                  Total Orders
+                  Orders Created
                 </CardTitle>
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
                   <ShoppingBag className="h-4 w-4" />
@@ -257,16 +293,16 @@ export default function DashboardPage() {
                   <span className="text-blue-600 font-medium inline-flex items-center">
                     +{data.metrics.totalOrders.changePercentage}%
                   </span>
-                  <span>all channels</span>
+                  <span>across all social surfaces</span>
                 </p>
               </CardContent>
             </Card>
 
-            {/* Pending Review (AI Drafts / Needs Seller Approval) */}
+            {/* Needs Approval */}
             <Card className="border-surface-200 shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-surface-500">
-                  Needs Approval
+                  Pending Orders
                 </CardTitle>
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
                   <Clock className="h-4 w-4" />
@@ -277,7 +313,7 @@ export default function DashboardPage() {
                   {data.metrics.pendingReview.value}
                 </div>
                 <p className="mt-1 text-xs text-surface-500 truncate" title={data.metrics.pendingReview.description}>
-                  Pending seller review
+                  Requires seller confirmation
                 </p>
               </CardContent>
             </Card>
@@ -286,7 +322,7 @@ export default function DashboardPage() {
             <Card className="border-surface-200 shadow-sm">
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-xs font-semibold uppercase tracking-wider text-surface-500">
-                  Customer Records
+                  Buyer Profiles
                 </CardTitle>
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-50 text-purple-600">
                   <Users className="h-4 w-4" />
@@ -300,75 +336,105 @@ export default function DashboardPage() {
                   <span className="text-purple-600 font-medium inline-flex items-center">
                     +{data.metrics.activeCustomers.changePercentage}%
                   </span>
-                  <span>repeat profiles</span>
+                  <span>social commerce CRM</span>
                 </p>
               </CardContent>
             </Card>
           </div>
 
-          {/* Quick Action Cards */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Link
-              href="/orders"
-              className="group flex items-center justify-between rounded-xl border border-surface-200 bg-white p-4 shadow-sm hover:border-brand-300 hover:shadow-md transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 text-brand-600 group-hover:bg-brand-600 group-hover:text-white transition-colors">
-                  <ShoppingBag className="h-5 w-5" />
+          {/* Social Platform Performance Matrix */}
+          {data.socialCommerce && (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {/* Instagram */}
+              <div className="rounded-xl border border-surface-200 bg-white p-4 shadow-xs">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-surface-600 flex items-center gap-1.5">
+                    <Instagram className="h-4 w-4 text-pink-600" /> Instagram
+                  </span>
+                  <span className="text-[11px] font-medium text-surface-400">
+                    {data.socialCommerce.platformBreakdown.INSTAGRAM?.count || 0} orders
+                  </span>
                 </div>
-                <div>
-                  <h4 className="text-sm font-semibold text-surface-900">Manage Orders</h4>
-                  <p className="text-xs text-surface-500">View and update fulfillment status</p>
+                <div className="text-lg font-bold text-surface-900">
+                  {new Intl.NumberFormat("en-US", {
+                    style: "currency",
+                    currency: data.businessInfo.currency || "USD",
+                  }).format(data.socialCommerce.platformBreakdown.INSTAGRAM?.revenue || 0)}
                 </div>
+                <div className="text-[11px] text-surface-400 mt-0.5">DMs, Stories, Reels</div>
               </div>
-              <ArrowUpRight className="h-4 w-4 text-surface-400 group-hover:text-brand-600 transition-colors" />
-            </Link>
 
-            <Link
-              href="/products"
-              className="group flex items-center justify-between rounded-xl border border-surface-200 bg-white p-4 shadow-sm hover:border-brand-300 hover:shadow-md transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                  <Package className="h-5 w-5" />
+              {/* WhatsApp */}
+              <div className="rounded-xl border border-surface-200 bg-white p-4 shadow-xs">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-surface-600 flex items-center gap-1.5">
+                    <MessageSquare className="h-4 w-4 text-emerald-600" /> WhatsApp
+                  </span>
+                  <span className="text-[11px] font-medium text-surface-400">
+                    {data.socialCommerce.platformBreakdown.WHATSAPP?.count || 0} orders
+                  </span>
                 </div>
-                <div>
-                  <h4 className="text-sm font-semibold text-surface-900">Stock & Products</h4>
-                  <p className="text-xs text-surface-500">Track SKUs, prices and counts</p>
+                <div className="text-lg font-bold text-surface-900">
+                  {new Intl.NumberFormat("en-US", {
+                    style: "currency",
+                    currency: data.businessInfo.currency || "USD",
+                  }).format(data.socialCommerce.platformBreakdown.WHATSAPP?.revenue || 0)}
                 </div>
+                <div className="text-[11px] text-surface-400 mt-0.5">Direct Chat & Catalog</div>
               </div>
-              <ArrowUpRight className="h-4 w-4 text-surface-400 group-hover:text-emerald-600 transition-colors" />
-            </Link>
 
-            <Link
-              href="/settings"
-              className="group flex items-center justify-between rounded-xl border border-surface-200 bg-white p-4 shadow-sm hover:border-brand-300 hover:shadow-md transition-all"
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-50 text-purple-600 group-hover:bg-purple-600 group-hover:text-white transition-colors">
-                  <Instagram className="h-5 w-5" />
+              {/* Facebook */}
+              <div className="rounded-xl border border-surface-200 bg-white p-4 shadow-xs">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-surface-600 flex items-center gap-1.5">
+                    <Layers className="h-4 w-4 text-blue-600" /> Facebook
+                  </span>
+                  <span className="text-[11px] font-medium text-surface-400">
+                    {data.socialCommerce.platformBreakdown.FACEBOOK?.count || 0} orders
+                  </span>
                 </div>
-                <div>
-                  <h4 className="text-sm font-semibold text-surface-900">Store Profile</h4>
-                  <p className="text-xs text-surface-500">Prefixes, currencies & channels</p>
+                <div className="text-lg font-bold text-surface-900">
+                  {new Intl.NumberFormat("en-US", {
+                    style: "currency",
+                    currency: data.businessInfo.currency || "USD",
+                  }).format(data.socialCommerce.platformBreakdown.FACEBOOK?.revenue || 0)}
                 </div>
+                <div className="text-[11px] text-surface-400 mt-0.5">Messenger & Marketplace</div>
               </div>
-              <ArrowUpRight className="h-4 w-4 text-surface-400 group-hover:text-purple-600 transition-colors" />
-            </Link>
-          </div>
 
-          {/* Recent Orders Section */}
+              {/* Direct / Manual */}
+              <div className="rounded-xl border border-surface-200 bg-white p-4 shadow-xs">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-surface-600 flex items-center gap-1.5">
+                    <ShoppingBag className="h-4 w-4 text-surface-600" /> Direct / Other
+                  </span>
+                  <span className="text-[11px] font-medium text-surface-400">
+                    {data.socialCommerce.platformBreakdown.MANUAL?.count || 0} orders
+                  </span>
+                </div>
+                <div className="text-lg font-bold text-surface-900">
+                  {new Intl.NumberFormat("en-US", {
+                    style: "currency",
+                    currency: data.businessInfo.currency || "USD",
+                  }).format(data.socialCommerce.platformBreakdown.MANUAL?.revenue || 0)}
+                </div>
+                <div className="text-[11px] text-surface-400 mt-0.5">In-person & Manual Entry</div>
+              </div>
+            </div>
+          )}
+
+          {/* Recent Social Transactions Table */}
           <Card className="border-surface-200 shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Recent Orders</CardTitle>
+                <CardTitle>Recent Transactions</CardTitle>
                 <CardDescription>
-                  Latest customer orders across Instagram, WhatsApp, and manual entry
+                  Canonical transaction records with live buyer-facing shared rooms
                 </CardDescription>
               </div>
               <Link href="/orders">
                 <Button variant="ghost" size="sm" className="gap-1 text-xs">
-                  <span>View All</span>
+                  <span>View All Orders</span>
                   <ExternalLink className="h-3.5 w-3.5" />
                 </Button>
               </Link>
@@ -377,8 +443,8 @@ export default function DashboardPage() {
               {data.recentOrders.length === 0 ? (
                 <EmptyState
                   icon={<ShoppingBag className="h-6 w-6" />}
-                  title="No orders yet"
-                  description="When you create manual orders or receive customer messages, orders will appear here."
+                  title="No transactions yet"
+                  description="When you create orders or sync customer messages, transactions will appear here."
                   action={
                     <Link href="/orders/new">
                       <Button size="sm">Create First Order</Button>
@@ -391,12 +457,12 @@ export default function DashboardPage() {
                     <thead className="border-b border-surface-200 text-xs font-semibold uppercase tracking-wider text-surface-500">
                       <tr>
                         <th className="pb-3 pr-4">Order #</th>
-                        <th className="pb-3 px-4">Customer</th>
-                        <th className="pb-3 px-4">Channel</th>
+                        <th className="pb-3 px-4">Buyer</th>
+                        <th className="pb-3 px-4">Social Context</th>
                         <th className="pb-3 px-4">Status</th>
                         <th className="pb-3 px-4">Payment</th>
                         <th className="pb-3 px-4 text-right">Total</th>
-                        <th className="pb-3 pl-4 text-right">Date</th>
+                        <th className="pb-3 pl-4 text-center">Buyer Room</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-surface-100">
@@ -419,7 +485,7 @@ export default function DashboardPage() {
                             )}
                           </td>
                           <td className="py-3.5 px-4">
-                            {getSourceBadge(order.source)}
+                            {getSourceBadge(order.platform || order.source, order.surface)}
                           </td>
                           <td className="py-3.5 px-4">
                             {getStatusBadge(order.status)}
@@ -430,8 +496,22 @@ export default function DashboardPage() {
                           <td className="py-3.5 px-4 text-right font-medium text-surface-900">
                             {order.formattedAmount}
                           </td>
-                          <td className="py-3.5 pl-4 text-right text-xs text-surface-500">
-                            {formatDate(order.createdAt)}
+                          <td className="py-3.5 pl-4 text-center">
+                            {order.trackingToken ? (
+                              <Link
+                                href={`/t/${order.trackingToken}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded-md bg-brand-50 px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-100 transition-colors border border-brand-200"
+                                title="Open Buyer-Facing Shared Room"
+                              >
+                                <Share2 className="h-3 w-3" />
+                                <span>Room</span>
+                                <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+                              </Link>
+                            ) : (
+                              <span className="text-xs text-surface-400">—</span>
+                            )}
                           </td>
                         </tr>
                       ))}

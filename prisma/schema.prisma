@@ -98,6 +98,105 @@ enum DeliveryPartner {
   OTHER
 }
 
+enum SocialPlatform {
+  INSTAGRAM
+  FACEBOOK
+  WHATSAPP
+  TIKTOK
+  TELEGRAM
+  OTHER
+  MANUAL
+}
+
+enum SocialSurface {
+  DM
+  POST
+  STORY
+  REEL
+  SHOP
+  MARKETPLACE
+  MESSENGER
+  PAGE
+  DIRECT_CHAT
+  BUSINESS_PROFILE
+  CATALOG
+  MANUAL_ENTRY
+  EXTERNAL_LINK
+  OTHER
+}
+
+enum TransactionStatus {
+  INQUIRY
+  INTENT_CONFIRMED
+  ORDER_CREATED
+  PAYMENT_PENDING
+  PAYMENT_VERIFIED
+  PROCESSING
+  DISPATCHED
+  IN_TRANSIT
+  DELIVERED
+  COMPLETED
+  DISPUTED
+  REFUNDED
+  CANCELLED
+}
+
+enum TimelineVisibility {
+  PUBLIC
+  INTERNAL_ONLY
+}
+
+enum TimelineActor {
+  BUYER
+  SELLER
+  SYSTEM
+  CARRIER
+}
+
+enum EvidenceType {
+  ORIGINAL_MESSAGE
+  ORDER_CONFIRMATION
+  PAYMENT_PROOF
+  PAYMENT_VERIFICATION
+  SHIPMENT_CREATION
+  CARRIER_TRACKING
+  DELIVERY_CONFIRMATION
+  BUYER_CONFIRMATION
+  SELLER_CONFIRMATION
+  RETURN_REQUEST
+  REFUND_RECORD
+  DISPUTE_EVIDENCE
+}
+
+enum EvidenceVerificationState {
+  OBSERVED
+  USER_PROVIDED
+  SELLER_CONFIRMED
+  BUYER_CONFIRMED
+  SYSTEM_GENERATED
+  REJECTED
+}
+
+enum DisputeStatus {
+  REQUESTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  RETURN_IN_TRANSIT
+  RETURN_RECEIVED
+  REFUND_PENDING
+  REFUNDED
+  CLOSED
+}
+
+enum ChannelSyncStatus {
+  SYNCED
+  PENDING
+  FAILED
+  NOT_SUPPORTED
+  MANUAL_REQUIRED
+}
+
 enum ShipmentStatus {
   PENDING
   DISPATCHED
@@ -200,6 +299,9 @@ model Business {
   automationJobs AutomationJob[]
   notifications  Notification[]
   auditLogs      AuditLog[]
+  socialTransactions SocialTransaction[]
+  disputes       TransactionDispute[]
+  channelListings ProductChannelListing[]
 
   @@map("businesses")
 }
@@ -264,6 +366,7 @@ model Customer {
   conversations   Conversation[]
   payments        Payment[]
   notifications   Notification[]
+  socialTransactions SocialTransaction[]
 
   @@index([businessId])
   @@index([businessId, createdAt])
@@ -289,6 +392,7 @@ model Product {
   business          Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
   variants          ProductVariant[]
   orderItems        OrderItem[]
+  channelListings   ProductChannelListing[]
 
   @@index([businessId])
   @@map("products")
@@ -344,6 +448,8 @@ model Order {
   payments         Payment[]
   shipments        Shipment[]
   notifications    Notification[]
+  socialTransaction SocialTransaction?
+  disputes         TransactionDispute[]
 
   @@unique([businessId, orderNumber])
   @@index([businessId])
@@ -417,6 +523,7 @@ model Conversation {
   customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
   messages           Message[]
   orders             Order[]
+  socialTransactions SocialTransaction[]
 
   @@index([businessId])
   @@index([customerId])
@@ -570,4 +677,129 @@ model TeamInvitation {
   @@index([email])
   @@index([token])
   @@map("team_invitations")
+}
+
+model SocialTransaction {
+  id                     String             @id @default(uuid())
+  businessId             String
+  orderId                String?            @unique
+  customerId             String?
+  conversationId         String?
+  platform               SocialPlatform     @default(MANUAL)
+  surface                SocialSurface      @default(MANUAL_ENTRY)
+  status                 TransactionStatus  @default(INQUIRY)
+  publicTrackingToken    String             @unique @default(uuid())
+  externalUserId         String?
+  externalConversationId String?
+  externalListingId      String?
+  externalPostId         String?
+  sourceUrl              String?
+  metadata               Json?
+  buyerNotes             String?
+  sellerNotes            String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  business       Business                   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order          Order?                     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  customer       Customer?                  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  conversation   Conversation?              @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  timelineEvents TransactionTimelineEvent[]
+  evidence       TransactionEvidence[]
+  disputes       TransactionDispute[]
+
+  @@index([businessId])
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+  @@index([customerId])
+  @@index([conversationId])
+  @@index([publicTrackingToken])
+  @@map("social_transactions")
+}
+
+model TransactionTimelineEvent {
+  id            String             @id @default(uuid())
+  transactionId String
+  eventType     String
+  title         String
+  description   String?
+  actor         TimelineActor      @default(SYSTEM)
+  visibility    TimelineVisibility @default(PUBLIC)
+  metadata      Json?
+  createdAt     DateTime           @default(now())
+
+  transaction   SocialTransaction  @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId])
+  @@index([transactionId, visibility])
+  @@index([createdAt])
+  @@map("transaction_timeline_events")
+}
+
+model TransactionEvidence {
+  id                String                    @id @default(uuid())
+  transactionId     String
+  evidenceType      EvidenceType
+  verificationState EvidenceVerificationState @default(OBSERVED)
+  source            String
+  actor             TimelineActor             @default(SYSTEM)
+  mediaUrl          String?
+  notes             String?
+  metadata          Json?
+  createdAt         DateTime                  @default(now())
+
+  transaction       SocialTransaction         @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId])
+  @@index([evidenceType])
+  @@map("transaction_evidence")
+}
+
+model TransactionDispute {
+  id              String        @id @default(uuid())
+  transactionId   String
+  orderId         String?
+  businessId      String
+  reason          String
+  status          DisputeStatus @default(REQUESTED)
+  refundAmount    Decimal?      @db.Decimal(12, 2)
+  buyerNotes      String?
+  sellerResponse  String?
+  resolutionNotes String?
+  evidenceUrls    String[]      @default([])
+  resolvedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  transaction     SocialTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  order           Order?            @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  business        Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([transactionId])
+  @@index([status])
+  @@map("transaction_disputes")
+}
+
+model ProductChannelListing {
+  id                String            @id @default(uuid())
+  productId         String
+  businessId        String
+  platform          SocialPlatform
+  externalListingId String?
+  platformTitle     String?
+  platformPrice     Decimal?          @db.Decimal(12, 2)
+  syncStatus        ChannelSyncStatus @default(PENDING)
+  lastSyncAt        DateTime?
+  syncError         String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  product           Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  business          Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, platform])
+  @@index([businessId])
+  @@index([platform])
+  @@map("product_channel_listings")
 }
