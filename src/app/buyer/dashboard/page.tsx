@@ -2,9 +2,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card"
+import { Card, CardHeader, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Alert } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -33,17 +32,28 @@ interface PurchasesResponse {
 }
 
 export default function BuyerDashboard() {
-  const { data: session, status } = useSession()
+  const [sessionStatus, setSessionStatus] = useState<"loading" | "authenticated" | "unauthenticated">("loading")
   const [purchases, setPurchases] = useState<PurchasesResponse | null>(null)
   const [filter, setFilter] = useState<"ACTIVE" | "COMPLETED" | "ATTENTION" | "ALL">("ACTIVE")
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Resolve session via existing custom session API (no next-auth)
   useEffect(() => {
-    if (status === "authenticated") {
+    fetch("/api/auth/session")
+      .then((r) => {
+        if (r.ok) setSessionStatus("authenticated")
+        else setSessionStatus("unauthenticated")
+      })
+      .catch(() => setSessionStatus("unauthenticated"))
+  }, [])
+
+  useEffect(() => {
+    if (sessionStatus === "authenticated") {
       fetchPurchases()
     }
-  }, [status, filter])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionStatus, filter])
 
   const fetchPurchases = async () => {
     setLoading(true)
@@ -60,7 +70,7 @@ export default function BuyerDashboard() {
     }
   }
 
-  if (status === "loading") {
+  if (sessionStatus === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Skeleton className="h-8 w-48" />
@@ -68,7 +78,7 @@ export default function BuyerDashboard() {
     )
   }
 
-  if (!session) {
+  if (sessionStatus === "unauthenticated") {
     return (
       <Alert variant="warning" title="Sign in required">
         Please sign in to view your purchase dashboard.
@@ -98,7 +108,7 @@ export default function BuyerDashboard() {
             <Skeleton className="h-24 w-full" />
           </div>
         )}
-        {error && <Alert variant="error" title="Error" description={error} />}
+        {error && <Alert variant="error" title="Error">{error}</Alert>}
         {purchases && purchases.items.length === 0 && (
           <p className="text-surface-500">No purchases found for the selected filter.</p>
         )}

@@ -2,7 +2,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useSession } from "next-auth/react"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -20,10 +19,20 @@ interface Notification {
 }
 
 export default function BuyerNotifications() {
-  const { data: session, status } = useSession()
+  const [sessionStatus, setSessionStatus] = useState<"loading" | "authenticated" | "unauthenticated">("loading")
   const [notifications, setNotifications] = useState<Notification[] | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Resolve session via existing custom session API (no next-auth)
+  useEffect(() => {
+    fetch("/api/auth/session")
+      .then((r) => {
+        if (r.ok) setSessionStatus("authenticated")
+        else setSessionStatus("unauthenticated")
+      })
+      .catch(() => setSessionStatus("unauthenticated"))
+  }, [])
 
   const fetchNotifications = async () => {
     setLoading(true)
@@ -55,10 +64,11 @@ export default function BuyerNotifications() {
   }
 
   useEffect(() => {
-    if (status === "authenticated") fetchNotifications()
-  }, [status])
+    if (sessionStatus === "authenticated") fetchNotifications()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionStatus])
 
-  if (status === "loading") {
+  if (sessionStatus === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Skeleton className="h-8 w-48" />
@@ -66,7 +76,7 @@ export default function BuyerNotifications() {
     )
   }
 
-  if (!session) {
+  if (sessionStatus === "unauthenticated") {
     return (
       <Alert variant="warning" title="Sign in required">
         Please sign in to view notifications.
@@ -84,7 +94,7 @@ export default function BuyerNotifications() {
             <Skeleton className="h-12 w-full" />
           </div>
         )}
-        {error && <Alert variant="error" title="Error" description={error} />}
+        {error && <Alert variant="error" title="Error">{error}</Alert>}
         {notifications && notifications.length === 0 && (
           <p className="text-surface-500">No notifications.</p>
         )}
@@ -93,7 +103,7 @@ export default function BuyerNotifications() {
             <Card key={n.id} className="border-surface-200">
               <CardHeader className="flex items-center justify-between">
                 <CardTitle>{n.title}</CardTitle>
-                <Badge variant={n.readAt ? "default" : "primary"}>
+                <Badge variant={n.readAt ? "secondary" : "default"}>
                   {n.readAt ? "Read" : "Unread"}
                 </Badge>
               </CardHeader>

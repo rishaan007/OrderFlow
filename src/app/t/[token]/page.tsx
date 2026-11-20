@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -343,7 +342,7 @@ export default function PublicTransactionRoomPage() {
             </Card>
           )}
           
-          {/* Existing Order Card continues below */)
+          {/* Existing Order Card continues below */}
         {data.order && (
           <Card className="border-surface-200 shadow-sm">
             <CardHeader className="border-b border-surface-100 pb-4">

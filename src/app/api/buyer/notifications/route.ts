@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getBuyerNotifications } from '@/lib/buyer';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getServerSession } from '@/lib/auth';
 import { checkRateLimit } from '@/lib/rate-limiter';
 
 export async function GET(req: Request) {
-  const session = await getServerSession(authOptions);
+  const session = await getServerSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   }
