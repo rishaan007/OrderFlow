@@ -530,4 +530,94 @@ describe("Phase 2: Social Commerce Connection & Synchronization Layer Acceptance
       expect(analytics.platformBreakdown[SocialPlatform.X]).toBeDefined();
     });
   });
+
+  describe("8. X / Twitter Provider CRC & Ingestion Hardening", () => {
+    it("should safely verify X signatures without throwing on buffer length mismatches", () => {
+      const xProvider = getSocialProvider(SocialPlatform.X);
+      const result = xProvider.verifyWebhook(
+        JSON.stringify({ text: "Hello" }),
+        "sha256=invalid_short_signature",
+        "test_secret"
+      );
+      expect(result).toBe(false);
+    });
+
+    it("should compute correct X CRC response token", async () => {
+      const { GET } = await import("../src/app/api/webhooks/x/route");
+      const req = new Request("http://localhost:3000/api/webhooks/x?crc_token=test_crc_123");
+      const res = await GET(req as any);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.response_token).toMatch(/^sha256=/);
+    });
+
+    it("should ingest X webhook events, deduplicate, and route to tenant", async () => {
+      await createOrUpdateConnection(tenantAId, {
+        platform: SocialPlatform.X,
+        accountIdentifier: "x_user_9988",
+        accountName: "Brand A on X",
+        accessToken: "x_access_token_mock",
+      });
+
+      const { POST } = await import("../src/app/api/webhooks/x/route");
+      const xPayload = {
+        for_user_id: "x_user_9988",
+        direct_message_events: [
+          {
+            id: `x_msg_${Date.now()}`,
+            created_timestamp: Date.now().toString(),
+            message_create: {
+              sender_id: "x_buyer_555",
+              message_data: {
+                text: "Interested in Silk Bomber Jacket! Can I order?",
+              },
+            },
+          },
+        ],
+      };
+
+      const req = new Request("http://localhost:3000/api/webhooks/x", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(xPayload),
+      });
+
+      const res = await POST(req as any);
+      const json = await res.json();
+      expect(res.status).toBe(200);
+      expect(json.status).toBe("success");
+      expect(json.processed).toBe(1);
+
+      const conv = await prisma.conversation.findFirst({
+        where: {
+          businessId: tenantAId,
+          channel: ConversationChannel.X,
+          contactIdentifier: "x_buyer_555",
+        },
+      });
+      expect(conv).toBeDefined();
+      expect(conv?.channel).toBe(ConversationChannel.X);
+    });
+  });
+
+  describe("9. Full Omnichannel Order Retrieval with Social Transaction Attribution", () => {
+    it("should return socialTransaction and tracking tokens when querying orders via getOrders and getOrderById", async () => {
+      const tenantADb = getTenantDb(tenantAId);
+      const ordersResult = await tenantADb.getOrders();
+      expect(ordersResult.items.length).toBeGreaterThanOrEqual(1);
+
+      const orderWithSocial = ordersResult.items.find((o) => o.socialTransaction);
+      expect(orderWithSocial).toBeDefined();
+      expect(orderWithSocial?.socialTransaction?.publicTrackingToken).toBeDefined();
+
+      if (orderWithSocial) {
+        const singleOrder = await tenantADb.getOrderById(orderWithSocial.id);
+        expect(singleOrder).toBeDefined();
+        expect(singleOrder?.socialTransaction).toBeDefined();
+        expect(singleOrder?.socialTransaction?.publicTrackingToken).toBe(
+          orderWithSocial.socialTransaction?.publicTrackingToken
+        );
+      }
+    });
+  });
 });

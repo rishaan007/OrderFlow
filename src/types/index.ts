@@ -267,6 +267,15 @@ export interface OrderItemSummary {
   items: OrderItemDetail[];
   payments?: PaymentItem[];
   shipments?: ShipmentItem[];
+  socialTransaction?: {
+    id: string;
+    publicTrackingToken: string;
+    platform: SocialPlatform;
+    surface: SocialSurface;
+    status: TransactionStatus;
+    externalConversationId?: string | null;
+    externalUserId?: string | null;
+  } | null;
 }
 
 export interface ApiResponse<T = unknown> {

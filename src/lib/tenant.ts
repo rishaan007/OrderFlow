@@ -768,6 +768,15 @@ export function getTenantDb(businessId: string) {
           include: {
             customer: true,
             items: true,
+            socialTransaction: {
+              select: {
+                id: true,
+                publicTrackingToken: true,
+                platform: true,
+                surface: true,
+                status: true,
+              },
+            },
           },
           orderBy,
           take: limit,
@@ -816,6 +825,15 @@ export function getTenantDb(businessId: string) {
           unitPrice: Number(i.unitPrice),
           totalPrice: Number(i.totalPrice),
         })),
+        socialTransaction: o.socialTransaction
+          ? {
+              id: o.socialTransaction.id,
+              publicTrackingToken: o.socialTransaction.publicTrackingToken,
+              platform: o.socialTransaction.platform,
+              surface: o.socialTransaction.surface,
+              status: o.socialTransaction.status,
+            }
+          : null,
       }));
 
       return {
@@ -843,6 +861,17 @@ export function getTenantDb(businessId: string) {
           },
           notifications: {
             orderBy: { createdAt: "desc" },
+          },
+          socialTransaction: {
+            select: {
+              id: true,
+              publicTrackingToken: true,
+              platform: true,
+              surface: true,
+              status: true,
+              externalConversationId: true,
+              externalUserId: true,
+            },
           },
         },
       });
@@ -948,6 +977,17 @@ export function getTenantDb(businessId: string) {
           createdAt: n.createdAt.toISOString(),
           updatedAt: n.updatedAt.toISOString(),
         })),
+        socialTransaction: o.socialTransaction
+          ? {
+              id: o.socialTransaction.id,
+              publicTrackingToken: o.socialTransaction.publicTrackingToken,
+              platform: o.socialTransaction.platform,
+              surface: o.socialTransaction.surface,
+              status: o.socialTransaction.status,
+              externalConversationId: o.socialTransaction.externalConversationId,
+              externalUserId: o.socialTransaction.externalUserId,
+            }
+          : null,
       };
     },
 
@@ -1134,6 +1174,15 @@ export function getTenantDb(businessId: string) {
           include: {
             customer: true,
             items: true,
+            socialTransaction: {
+              select: {
+                id: true,
+                publicTrackingToken: true,
+                platform: true,
+                surface: true,
+                status: true,
+              },
+            },
           },
         });
 
@@ -1322,6 +1371,15 @@ export function getTenantDb(businessId: string) {
           include: {
             customer: true,
             items: true,
+            socialTransaction: {
+              select: {
+                id: true,
+                publicTrackingToken: true,
+                platform: true,
+                surface: true,
+                status: true,
+              },
+            },
           },
         });
       });

@@ -57,7 +57,7 @@ export default function NewOrderPage() {
     address: "",
   });
 
-  const [source, setSource] = useState<"MANUAL" | "WHATSAPP" | "INSTAGRAM" | "ONLINE">("WHATSAPP");
+  const [source, setSource] = useState<"MANUAL" | "WHATSAPP" | "INSTAGRAM" | "FACEBOOK" | "X" | "ONLINE">("WHATSAPP");
   const [status, setStatus] = useState<"PENDING" | "CONFIRMED" | "DRAFT">("CONFIRMED");
   const [paymentStatus, setPaymentStatus] = useState<"PENDING" | "PAID">("PAID");
 
@@ -632,6 +632,8 @@ export default function NewOrderPage() {
                   >
                     <option value="WHATSAPP">WhatsApp Conversation</option>
                     <option value="INSTAGRAM">Instagram Direct</option>
+                    <option value="FACEBOOK">Facebook Messenger</option>
+                    <option value="X">X / Twitter Direct Message</option>
                     <option value="MANUAL">Direct / Phone / Walk-in</option>
                     <option value="ONLINE">Online Store</option>
                   </select>

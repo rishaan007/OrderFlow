@@ -122,10 +122,10 @@ export class XProvider implements SocialCommerceProvider {
       .update(payload, "utf8")
       .digest("base64");
 
-    return crypto.timingSafeEqual(
-      Buffer.from(computedHash),
-      Buffer.from(expectedHash)
-    );
+    const compBuf = Buffer.from(computedHash);
+    const expBuf = Buffer.from(expectedHash);
+    if (compBuf.length !== expBuf.length) return false;
+    return crypto.timingSafeEqual(compBuf, expBuf);
   }
 
   async parseIncomingWebhook(

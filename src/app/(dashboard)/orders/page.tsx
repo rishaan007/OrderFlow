@@ -18,6 +18,9 @@ import {
   Clock,
   DollarSign,
   Package,
+  ExternalLink,
+  Sparkles,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -148,6 +151,24 @@ export default function OrdersPage() {
         return (
           <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
             <MessageSquare className="h-3 w-3" /> WhatsApp
+          </span>
+        );
+      case "FACEBOOK":
+        return (
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+            <span className="h-2 w-2 rounded-full bg-blue-600" /> Facebook
+          </span>
+        );
+      case "X":
+        return (
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-800 bg-slate-100 border border-slate-300 px-2 py-0.5 rounded">
+            <span className="h-2 w-2 rounded-full bg-slate-900" /> X / Twitter
+          </span>
+        );
+      case "ONLINE":
+        return (
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
+            <Globe className="h-3 w-3" /> Online Store
           </span>
         );
       default:
@@ -283,6 +304,9 @@ export default function OrdersPage() {
             <option value="ALL">All Channels</option>
             <option value="WHATSAPP">WhatsApp</option>
             <option value="INSTAGRAM">Instagram</option>
+            <option value="FACEBOOK">Facebook</option>
+            <option value="X">X / Twitter</option>
+            <option value="ONLINE">Online Store</option>
             <option value="MANUAL">Manual</option>
           </select>
         </div>
@@ -481,9 +505,10 @@ export default function OrdersPage() {
                   </h3>
                   {getStatusBadge(selectedOrder.status, selectedOrder.requiresApproval)}
                 </div>
-                <p className="text-xs text-surface-500 mt-1">
-                  Placed {formatDate(selectedOrder.createdAt)} via {selectedOrder.source}
-                </p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-xs text-surface-500">Placed {formatDate(selectedOrder.createdAt)} via</span>
+                  {getSourceBadge(selectedOrder.source)}
+                </div>
               </div>
               <button
                 type="button"
@@ -493,6 +518,34 @@ export default function OrdersPage() {
                 ✕
               </button>
             </div>
+
+            {/* Social Commerce Attribution & Transaction Room */}
+            {selectedOrder.socialTransaction && (
+              <div className="rounded-lg border border-brand-200 bg-brand-50/60 p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-brand-600" />
+                    <span className="font-semibold text-xs text-brand-900">
+                      {selectedOrder.socialTransaction.platform} Transaction Room
+                    </span>
+                    <Badge variant="outline" className="text-[10px] bg-white">
+                      {selectedOrder.socialTransaction.surface}
+                    </Badge>
+                  </div>
+                  <a
+                    href={`/t/${selectedOrder.socialTransaction.publicTrackingToken}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md bg-brand-600 text-white hover:bg-brand-700 transition-colors shadow-sm"
+                  >
+                    View Room <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+                <div className="text-[11px] text-brand-800 font-mono">
+                  Room Token: {selectedOrder.socialTransaction.publicTrackingToken}
+                </div>
+              </div>
+            )}
 
             {/* Inventory Status Alert */}
             <div className="rounded-lg border border-surface-200 bg-surface-50 p-3 flex items-center justify-between text-xs">

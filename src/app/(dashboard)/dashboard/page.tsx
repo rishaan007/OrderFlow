@@ -87,6 +87,14 @@ export default function DashboardPage() {
             {surfaceTag && <span className="text-[10px] opacity-75 font-mono">({surfaceTag})</span>}
           </span>
         );
+      case "X":
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-800 bg-slate-100 border border-slate-300 px-2 py-0.5 rounded-md">
+            <span className="h-2 w-2 rounded-full bg-slate-900" />
+            <span>X / Twitter</span>
+            {surfaceTag && <span className="text-[10px] opacity-75 font-mono">({surfaceTag})</span>}
+          </span>
+        );
       default:
         return (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-surface-600 bg-surface-100 border border-surface-200 px-2 py-0.5 rounded-md">
