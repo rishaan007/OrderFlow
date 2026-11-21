@@ -115,6 +115,10 @@ export default function PublicTransactionRoomPage() {
         return <Instagram className="h-4 w-4 text-pink-600" />;
       case "WHATSAPP":
         return <MessageSquare className="h-4 w-4 text-emerald-600" />;
+      case "FACEBOOK":
+        return <span className="h-4 w-4 rounded-full bg-blue-600 text-[10px] font-bold text-white flex items-center justify-center leading-none">f</span>;
+      case "X":
+        return <span className="h-4 w-4 rounded-full bg-slate-900 text-[10px] font-bold text-white flex items-center justify-center leading-none">𝕏</span>;
       default:
         return <ShoppingBag className="h-4 w-4 text-brand-600" />;
     }

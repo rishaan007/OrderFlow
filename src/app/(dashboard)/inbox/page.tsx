@@ -59,6 +59,13 @@ export default function UnifiedInboxPage() {
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [isExtractingOrder, setIsExtractingOrder] = useState(false);
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+  const [isCreatingDraft, setIsCreatingDraft] = useState(false);
+  const [activeDraft, setActiveDraft] = useState<{
+    id: string;
+    publicTrackingToken: string;
+    totalAmount: number;
+    status: string;
+  } | null>(null);
 
   // Message Form
   const [messageText, setMessageText] = useState("");
@@ -355,6 +362,166 @@ export default function UnifiedInboxPage() {
     } finally {
       setIsCreatingOrder(false);
     }
+  };
+
+  // 6b. Create Draft Transaction (Phase 2 Deterministic Commerce Flow)
+  const handleCreateDraftTransaction = async () => {
+    if (!selectedConversation || !extractedData) return;
+    if (extractedData.items.length === 0) {
+      setActionError("Please add at least one item before creating a draft transaction.");
+      return;
+    }
+
+    setIsCreatingDraft(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const channelPlatformMap: Record<string, string> = {
+        WHATSAPP: "WHATSAPP",
+        INSTAGRAM: "INSTAGRAM",
+        FACEBOOK: "FACEBOOK",
+        X: "X",
+        MANUAL: "MANUAL",
+        OTHER: "OTHER",
+      };
+
+      const res = await fetch("/api/transactions/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: selectedConversation.id,
+          customerId: selectedConversation.customerId || null,
+          customerName: orderCustomerName || selectedConversation.contactName || "Customer",
+          customerPhone: orderPhone || null,
+          shippingAddress: orderShippingAddress || null,
+          city: extractedData.city || null,
+          items: extractedData.items.map((i) => ({
+            productId: i.productId || null,
+            variantId: i.variantId || null,
+            title: i.title,
+            variantTitle: i.variantTitle || null,
+            quantity: i.quantity,
+            unitPrice: i.unitPrice,
+          })),
+          discount: orderDiscount,
+          shipping: orderShipping,
+          notes: orderNotes || `Draft transaction from ${selectedConversation.channel} conversation`,
+          platform: channelPlatformMap[selectedConversation.channel] || "MANUAL",
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success && data.data) {
+        setActiveDraft({
+          id: data.data.id,
+          publicTrackingToken: data.data.publicTrackingToken,
+          totalAmount: data.data.totalAmount,
+          status: data.data.status,
+        });
+        setActionSuccess(
+          `Draft Transaction created! Room Token: ${data.data.publicTrackingToken}`
+        );
+        await selectConversation(selectedConversation.id);
+        fetchConversations();
+      } else {
+        setActionError(data.error || "Failed to create draft transaction");
+      }
+    } catch {
+      setActionError("Network error while creating draft transaction");
+    } finally {
+      setIsCreatingDraft(false);
+    }
+  };
+
+  // 6c. Confirm Draft Transaction into Order
+  const handleConfirmDraft = async () => {
+    if (!activeDraft) return;
+    setIsCreatingOrder(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch(`/api/transactions/draft/${activeDraft.id}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerName: orderCustomerName || selectedConversation?.contactName || "Customer",
+          shippingAddress: orderShippingAddress,
+          city: extractedData?.city || undefined,
+          customerPhone: orderPhone || undefined,
+          notes: orderNotes || undefined,
+          allowDuplicate: allowDuplicateOverride,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success && data.data) {
+        setActionSuccess(
+          `Draft confirmed! Order #${data.data.order.orderNumber} created with full social attribution.`
+        );
+        setActiveDraft(null);
+        if (selectedConversation) {
+          await selectConversation(selectedConversation.id);
+          fetchConversations();
+        }
+      } else {
+        setActionError(data.error || "Failed to confirm draft transaction");
+      }
+    } catch {
+      setActionError("Network error while confirming draft transaction");
+    } finally {
+      setIsCreatingOrder(false);
+    }
+  };
+
+  // 6d. Start Manual Draft Transaction (Catalog Selection)
+  const handleStartManualDraft = () => {
+    if (!selectedConversation) return;
+    const defaultProduct = catalogProducts[0];
+    const defaultVariant = defaultProduct?.variants?.[0];
+
+    const initialItem = defaultProduct
+      ? {
+          productId: defaultProduct.id,
+          variantId: defaultVariant?.id,
+          title: defaultProduct.title,
+          variantTitle: defaultVariant?.title,
+          quantity: 1,
+          unitPrice: defaultVariant ? Number(defaultVariant.price) : Number(defaultProduct.price),
+          confidence: 1.0,
+          inStock: (defaultVariant?.stockQuantity ?? defaultProduct.stockQuantity) > 0,
+          availableStock: defaultVariant?.stockQuantity ?? defaultProduct.stockQuantity,
+        }
+      : {
+          title: "Custom Item",
+          quantity: 1,
+          unitPrice: 50,
+          confidence: 1.0,
+          inStock: true,
+          availableStock: 99,
+        };
+
+    const initialDraft: ExtractedOrder = {
+      items: [initialItem],
+      customerName: selectedConversation.contactName || "",
+      phone: selectedConversation.contactIdentifier.startsWith("+")
+        ? selectedConversation.contactIdentifier
+        : "",
+      shippingAddress: selectedConversation.customer?.address || "",
+      notes: "",
+      subtotal: initialItem.unitPrice,
+      totalAmount: initialItem.unitPrice,
+      discount: 0,
+      shipping: 0,
+      tax: 0,
+      hasPaymentProof: false,
+      missingInformation: [],
+      isComplete: true,
+    };
+
+    syncExtractedOrderForm(initialDraft);
+    setActiveTab("order");
   };
 
   // 7. Update Item Variant or Quantity in Extraction Preview
@@ -949,6 +1116,40 @@ export default function UnifiedInboxPage() {
               {/* TAB CONTENT 1: AI ORDER EXTRACTION PIPELINE */}
               {activeTab === "order" && (
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {/* Active Draft Transaction Card */}
+                  {activeDraft && (
+                    <div className="rounded-lg border border-brand-200 bg-brand-50 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-semibold text-xs text-brand-900">
+                          <Sparkles className="h-4 w-4 text-brand-600" />
+                          <span>Draft Transaction Active</span>
+                        </div>
+                        <Badge variant="outline" className="bg-white text-brand-700 text-[10px]">
+                          {activeDraft.status}
+                        </Badge>
+                      </div>
+                      <div className="text-[11px] text-brand-700 flex items-center justify-between">
+                        <span>Room Token: <strong className="font-mono">{activeDraft.publicTrackingToken}</strong></span>
+                        <a
+                          href={`/t/${activeDraft.publicTrackingToken}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-semibold text-brand-700 hover:underline inline-flex items-center gap-1"
+                        >
+                          Open Room <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={handleConfirmDraft}
+                        isLoading={isCreatingOrder}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-1.5 gap-1.5 mt-1"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Confirm Draft into Order
+                      </Button>
+                    </div>
+                  )}
                   {/* Duplicate Order Warning */}
                   {selectedConversation.orders && selectedConversation.orders.length > 0 && (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
@@ -1146,22 +1347,34 @@ export default function UnifiedInboxPage() {
                         </div>
                       </div>
 
-                      {/* Seller Review & Approval Button */}
-                      <Button
-                        onClick={handleApproveAndCreateOrder}
-                        isLoading={isCreatingOrder}
-                        disabled={
-                          !orderShippingAddress.trim() ||
-                          extractedData.items.length === 0 ||
-                          (selectedConversation.orders &&
-                            selectedConversation.orders.length > 0 &&
-                            !allowDuplicateOverride)
-                        }
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2.5 gap-2"
-                      >
-                        <CheckCircle2 className="h-4 w-4" />
-                        Approve & Create Confirmed Order
-                      </Button>
+                      {/* Seller Review & Approval Buttons (Draft or Direct Confirm) */}
+                      <div className="space-y-2 pt-2">
+                        <Button
+                          onClick={handleCreateDraftTransaction}
+                          isLoading={isCreatingDraft}
+                          disabled={extractedData.items.length === 0}
+                          variant="outline"
+                          className="w-full border-brand-300 text-brand-700 hover:bg-brand-50 font-semibold text-xs py-2 gap-2"
+                        >
+                          <Sparkles className="h-3.5 w-3.5" />
+                          Save as Draft Transaction
+                        </Button>
+                        <Button
+                          onClick={handleApproveAndCreateOrder}
+                          isLoading={isCreatingOrder}
+                          disabled={
+                            !orderShippingAddress.trim() ||
+                            extractedData.items.length === 0 ||
+                            (selectedConversation.orders &&
+                              selectedConversation.orders.length > 0 &&
+                              !allowDuplicateOverride)
+                          }
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2.5 gap-2"
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                          Approve & Create Confirmed Order
+                        </Button>
+                      </div>
                     </>
                   ) : (
                     <div className="text-center py-12 px-4 space-y-3">
@@ -1169,19 +1382,29 @@ export default function UnifiedInboxPage() {
                         <Sparkles className="h-6 w-6" />
                       </div>
                       <h4 className="font-bold text-sm text-surface-900">
-                        Parse Order Details
+                        Create Transaction from Conversation
                       </h4>
                       <p className="text-xs text-surface-500">
-                        Click below to analyze this conversation, match items to your inventory, detect missing information, and preview the order for approval.
+                        Extract order details with AI assistance, or manually select products from your catalog to create a structured draft transaction.
                       </p>
-                      <Button
-                        onClick={handleExtractOrder}
-                        isLoading={isExtractingOrder}
-                        className="gap-2 bg-brand-600 hover:bg-brand-700 text-xs"
-                      >
-                        <Sparkles className="h-4 w-4" />
-                        Extract Order Details
-                      </Button>
+                      <div className="flex flex-col sm:flex-row gap-2 justify-center pt-2">
+                        <Button
+                          onClick={handleExtractOrder}
+                          isLoading={isExtractingOrder}
+                          className="gap-2 bg-brand-600 hover:bg-brand-700 text-xs"
+                        >
+                          <Sparkles className="h-4 w-4" />
+                          Extract with AI
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={handleStartManualDraft}
+                          className="gap-2 text-xs border-surface-300"
+                        >
+                          <Plus className="h-4 w-4" />
+                          Create Draft Order
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </div>
