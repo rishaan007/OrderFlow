@@ -474,3 +474,93 @@ export const claimTransactionSchema = z.object({
 export type ConfirmDeliveryInput = z.infer<typeof confirmDeliverySchema>;
 export type SubmitBuyerPaymentInput = z.infer<typeof submitBuyerPaymentSchema>;
 export type ClaimTransactionInput = z.infer<typeof claimTransactionSchema>;
+
+// ============================================================================
+// Phase 3 — Buyer Identity, Linking, Verification & Claiming Schemas
+// ============================================================================
+
+export const buyerIdentityProviderEnum = z.enum([
+  "ORDERFLOW_ACCOUNT",
+  "INSTAGRAM",
+  "WHATSAPP",
+  "FACEBOOK",
+  "X",
+  "EMAIL",
+  "PHONE",
+]);
+
+export const updateBuyerProfileSchema = z.object({
+  displayName: z.string().min(1, "Display name cannot be empty").max(100).optional().nullable(),
+  locale: z.string().max(10).optional().nullable(),
+  timezone: z.string().max(50).optional().nullable(),
+  avatarUrl: z.string().url("Valid image URL required").optional().nullable().or(z.literal("")),
+  privacySettings: z
+    .object({
+      allowCrossSellerIdentityResolution: z.boolean().optional(),
+      marketingNotifications: z.boolean().optional(),
+    })
+    .optional()
+    .nullable(),
+  notificationPreferences: z
+    .object({
+      transactionUpdates: z.boolean().optional(),
+      promotionalUpdates: z.boolean().optional(),
+    })
+    .optional()
+    .nullable(),
+});
+
+export const linkBuyerIdentitySchema = z.object({
+  provider: buyerIdentityProviderEnum,
+  externalIdentityId: z.string().min(1, "Identifier required").max(255),
+  metadata: z.record(z.unknown()).optional().nullable(),
+});
+
+export const requestContactVerificationSchema = z.object({
+  type: z.enum(["EMAIL", "PHONE"]),
+  value: z.string().min(3, "Contact value required").max(255),
+});
+
+export const verifyContactCodeSchema = z.object({
+  challengeId: z.string().min(1, "Challenge ID required"),
+  code: z.string().min(4, "Verification code required").max(10),
+});
+
+export const createBuyerClaimChallengeSchema = z.object({
+  token: z.string().min(8, "Transaction token required"),
+});
+
+export const consumeBuyerClaimChallengeSchema = z.object({
+  challengeId: z.string().min(1, "Challenge ID required"),
+  challengeToken: z.string().min(8, "Challenge token required"),
+});
+
+export const claimBuyerTransactionSchema = z.object({
+  token: z.string().min(8, "Transaction token required").optional(),
+  challengeId: z.string().optional(),
+  challengeToken: z.string().optional(),
+});
+
+export const createMergeRequestSchema = z.object({
+  targetIdentityId: z.string().uuid().optional(),
+  targetEmail: z.string().email().optional(),
+  targetPhone: z.string().min(6).optional(),
+  targetProvider: buyerIdentityProviderEnum.optional(),
+  targetExternalId: z.string().min(1).optional(),
+});
+
+export const confirmMergeRequestSchema = z.object({
+  requestId: z.string().uuid("Merge request ID required"),
+  code: z.string().min(4, "Verification code required").max(10),
+});
+
+export type UpdateBuyerProfileInput = z.infer<typeof updateBuyerProfileSchema>;
+export type LinkBuyerIdentityInput = z.infer<typeof linkBuyerIdentitySchema>;
+export type RequestContactVerificationInput = z.infer<typeof requestContactVerificationSchema>;
+export type VerifyContactCodeInput = z.infer<typeof verifyContactCodeSchema>;
+export type CreateBuyerClaimChallengeInput = z.infer<typeof createBuyerClaimChallengeSchema>;
+export type ConsumeBuyerClaimChallengeInput = z.infer<typeof consumeBuyerClaimChallengeSchema>;
+export type ClaimBuyerTransactionInput = z.infer<typeof claimBuyerTransactionSchema>;
+export type CreateMergeRequestInput = z.infer<typeof createMergeRequestSchema>;
+export type ConfirmMergeRequestInput = z.infer<typeof confirmMergeRequestSchema>;
+

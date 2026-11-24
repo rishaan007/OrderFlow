@@ -45,6 +45,42 @@ export default function PublicTransactionRoomPage() {
   const [disputeSuccess, setDisputeSuccess] = useState<string | null>(null);
   const [disputeError, setDisputeError] = useState<string | null>(null);
 
+  // Buyer session & claim state
+  const [currentUser, setCurrentUser] = useState<{ id: string; email: string } | null>(null);
+  const [isClaiming, setIsClaiming] = useState(false);
+  const [claimSuccess, setClaimSuccess] = useState<string | null>(null);
+  const [claimError, setClaimError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/session")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.user) setCurrentUser(d.user);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleClaimTransaction = async () => {
+    setIsClaiming(true);
+    setClaimError(null);
+    setClaimSuccess(null);
+    try {
+      const res = await fetch("/api/buyer/claims", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to claim purchase");
+      setClaimSuccess("This transaction has been successfully claimed to your universal OrderFlow account!");
+      await fetchTransaction();
+    } catch (err: any) {
+      setClaimError(err.message);
+    } finally {
+      setIsClaiming(false);
+    }
+  };
+
   const fetchTransaction = async () => {
     setIsLoading(true);
     setError(null);
@@ -183,6 +219,63 @@ export default function PublicTransactionRoomPage() {
             {disputeSuccess}
           </Alert>
         )}
+
+        {/* Phase 3: Universal Buyer Identity Claim Banner */}
+        <Card className="border-brand-200 bg-brand-50/40 shadow-xs">
+          <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-brand-600 text-white flex items-center justify-center shrink-0">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="font-semibold text-xs text-surface-900">
+                  {claimSuccess
+                    ? "Purchase Connected to Your OrderFlow Identity"
+                    : currentUser
+                    ? "Save to Your OrderFlow Universal Account"
+                    : "Track All Your Social Purchases in One Place"}
+                </div>
+                <div className="text-[11px] text-surface-500">
+                  {claimSuccess
+                    ? "This transaction is permanently linked to your profile."
+                    : currentUser
+                    ? `Logged in as ${currentUser.email}. Consolidate this transaction with your other purchases.`
+                    : "Have an OrderFlow account? Sign in to save this purchase and track updates."}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {claimSuccess ? (
+                <Link href="/buyer/dashboard">
+                  <Button size="sm" variant="outline" className="text-xs h-8">
+                    View in Dashboard
+                  </Button>
+                </Link>
+              ) : currentUser ? (
+                <Button
+                  size="sm"
+                  onClick={handleClaimTransaction}
+                  isLoading={isClaiming}
+                  className="text-xs h-8 gap-1.5"
+                >
+                  Save to My Account
+                </Button>
+              ) : (
+                <Link href={`/login?redirect=/t/${encodeURIComponent(token)}`}>
+                  <Button size="sm" variant="outline" className="text-xs h-8">
+                    Sign In to Claim
+                  </Button>
+                </Link>
+              )}
+            </div>
+          </CardContent>
+          {claimError && (
+            <div className="px-4 pb-3 text-xs text-red-600">
+              {claimError}
+            </div>
+          )}
+        </Card>
 
         {/* 1. Seller Trust Card */}
         <Card className="border-surface-200 shadow-sm overflow-hidden bg-white">
