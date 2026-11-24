@@ -297,6 +297,57 @@ enum EventProcessingStatus {
   FAILED
 }
 
+// -------------------------------------------------------------
+// Phase 3: Cross-Platform Buyer Identity
+// -------------------------------------------------------------
+
+enum BuyerIdentityStatus {
+  ACTIVE
+  SUSPENDED
+  MERGED
+  DELETED
+}
+
+enum BuyerIdentityProvider {
+  ORDERFLOW_ACCOUNT
+  INSTAGRAM
+  WHATSAPP
+  FACEBOOK
+  X
+  EMAIL
+  PHONE
+}
+
+enum IdentityConfidence {
+  UNVERIFIED
+  VERIFIED
+  STRONGLY_VERIFIED
+}
+
+enum BuyerVerificationPurpose {
+  EMAIL_VERIFICATION
+  PHONE_VERIFICATION
+  SOCIAL_LINK_VERIFICATION
+  IDENTITY_MERGE
+}
+
+enum BuyerIdentityEventType {
+  IDENTITY_CREATED
+  IDENTITY_LINKED
+  IDENTITY_VERIFICATION_REQUESTED
+  IDENTITY_VERIFIED
+  IDENTITY_VERIFICATION_FAILED
+  IDENTITY_UNLINKED
+  IDENTITY_PROFILE_UPDATED
+  MERGE_REQUESTED
+  IDENTITY_MERGED
+  MERGE_REJECTED
+  ACCOUNT_CLAIMED
+  CLAIM_CHALLENGE_ISSUED
+  CLAIM_REJECTED
+  IDENTITY_LOOKUP_FAILED
+}
+
 model User {
   id              String           @id @default(uuid())
   email           String           @unique
@@ -313,8 +364,156 @@ model User {
   invitationsSent TeamInvitation[] @relation("InvitedByUser")
   claimedTransactions SocialTransaction[] @relation("BuyerTransactions")
   notifications   Notification[]   @relation("UserNotifications")
+  buyerIdentity   BuyerIdentity?   @relation("BuyerIdentityAccount")
 
   @@map("users")
+}
+
+// Platform-level buyer identity. Deliberately separate from both `User`
+// (an account credential) and `Customer` (a seller-scoped relationship).
+model BuyerIdentity {
+  id                    String              @id @default(uuid())
+  userId                String?             @unique
+  status                BuyerIdentityStatus @default(ACTIVE)
+  accountState          String              @default("ACTIVE")
+  displayName           String?
+  avatarUrl             String?
+  locale                String?
+  timezone              String?
+  email                 String?
+  phone                 String?
+  emailVerifiedAt       DateTime?
+  phoneVerifiedAt       DateTime?
+  verificationLevel     IdentityConfidence  @default(UNVERIFIED)
+  privacySettings       Json?
+  notificationPreferences Json?
+  lastSeenAt            DateTime?
+  mergedIntoId          String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  user                User?                          @relation("BuyerIdentityAccount", fields: [userId], references: [id], onDelete: SetNull)
+  mergedInto          BuyerIdentity?                 @relation("BuyerIdentityMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom          BuyerIdentity[]               @relation("BuyerIdentityMerge")
+  links               BuyerIdentityLink[]
+  auditEvents         BuyerIdentityAuditEvent[]
+  transactions        SocialTransaction[]            @relation("BuyerIdentityTransactions")
+  customers           Customer[]
+  claimChallenges     BuyerClaimChallenge[]
+  verificationChallenges BuyerVerificationChallenge[]
+  mergeRequestsSent   BuyerIdentityMergeRequest[]    @relation("MergeRequestSource")
+  mergeRequestsReceived BuyerIdentityMergeRequest[]  @relation("MergeRequestTarget")
+
+  @@index([status])
+  @@index([mergedIntoId])
+  @@index([email])
+  @@index([phone])
+  @@index([lastSeenAt])
+  @@map("buyer_identities")
+}
+
+// A deterministic, externally-proven link between a buyer identity and a
+// social platform identity, email address, phone number, or account.
+model BuyerIdentityLink {
+  id                  String                @id @default(uuid())
+  buyerIdentityId     String
+  provider            BuyerIdentityProvider
+  externalIdentityId  String
+  normalizedIdentifier String?
+  confidence          IdentityConfidence    @default(UNVERIFIED)
+  verificationMethod  String?
+  verifiedAt          DateTime?
+  lastVerifiedAt      DateTime?
+  metadata            Json?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  buyerIdentity BuyerIdentity @relation(fields: [buyerIdentityId], references: [id], onDelete: Cascade)
+
+  // One external identity may belong to exactly one buyer identity.
+  @@unique([provider, externalIdentityId])
+  @@index([buyerIdentityId])
+  @@index([provider, normalizedIdentifier])
+  @@map("buyer_identity_links")
+}
+
+model BuyerVerificationChallenge {
+  id               String                   @id @default(uuid())
+  buyerIdentityId  String
+  purpose          BuyerVerificationPurpose
+  provider         BuyerIdentityProvider?
+  target           String
+  codeHash         String
+  attempts         Int                      @default(0)
+  maxAttempts      Int                      @default(5)
+  expiresAt        DateTime
+  consumedAt       DateTime?
+  createdAt        DateTime                 @default(now())
+
+  buyerIdentity BuyerIdentity @relation(fields: [buyerIdentityId], references: [id], onDelete: Cascade)
+
+  @@index([buyerIdentityId, purpose])
+  @@index([buyerIdentityId, createdAt])
+  @@index([expiresAt])
+  @@map("buyer_verification_challenges")
+}
+
+// Single-use, expiring proof that the authenticated buyer controlled the
+// transaction link before claiming it.
+model BuyerClaimChallenge {
+  id              String    @id @default(uuid())
+  buyerIdentityId String
+  transactionId   String
+  tokenHash       String    @unique
+  expiresAt       DateTime
+  consumedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  buyerIdentity BuyerIdentity    @relation(fields: [buyerIdentityId], references: [id], onDelete: Cascade)
+  transaction   SocialTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([buyerIdentityId, transactionId])
+  @@index([expiresAt])
+  @@map("buyer_claim_challenges")
+}
+
+model BuyerIdentityMergeRequest {
+  id                   String    @id @default(uuid())
+  sourceIdentityId     String
+  targetIdentityId     String
+  requestedByUserId    String?
+  proofChannel         BuyerIdentityProvider?
+  proofTarget          String?
+  codeHash             String?
+  attempts             Int       @default(0)
+  maxAttempts          Int       @default(5)
+  status               String    @default("PENDING")
+  expiresAt            DateTime
+  decidedAt            DateTime?
+  createdAt            DateTime  @default(now())
+
+  sourceIdentity BuyerIdentity @relation("MergeRequestSource", fields: [sourceIdentityId], references: [id], onDelete: Cascade)
+  targetIdentity BuyerIdentity @relation("MergeRequestTarget", fields: [targetIdentityId], references: [id], onDelete: Cascade)
+
+  @@index([sourceIdentityId, status])
+  @@index([targetIdentityId, status])
+  @@map("buyer_identity_merge_requests")
+}
+
+model BuyerIdentityAuditEvent {
+  id              String                 @id @default(uuid())
+  buyerIdentityId String
+  actorType       String                 @default("SYSTEM") // BUYER | SELLER | SYSTEM
+  actorUserId     String?
+  eventType       BuyerIdentityEventType
+  metadata        Json?
+  createdAt       DateTime               @default(now())
+
+  buyerIdentity BuyerIdentity @relation(fields: [buyerIdentityId], references: [id], onDelete: Cascade)
+
+  @@index([buyerIdentityId, createdAt])
+  @@index([eventType])
+  @@map("buyer_identity_audit_events")
 }
 
 model Business {
@@ -408,6 +607,7 @@ model Customer {
   tags            String[] @default([])
   totalSpent      Decimal  @default(0) @db.Decimal(12, 2)
   ordersCount     Int      @default(0)
+  buyerIdentityId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -417,9 +617,14 @@ model Customer {
   payments        Payment[]
   notifications   Notification[]
   socialTransactions SocialTransaction[]
+  buyerIdentity   BuyerIdentity? @relation(fields: [buyerIdentityId], references: [id], onDelete: SetNull)
 
+  @@unique([businessId, buyerIdentityId])
   @@index([businessId])
   @@index([businessId, createdAt])
+  @@index([buyerIdentityId])
+  @@index([businessId, email])
+  @@index([businessId, phone])
   @@map("customers")
 }
 
@@ -756,9 +961,12 @@ model SocialTransaction {
   buyerNotes             String?
   sellerNotes            String?
   buyerUserId            String?
+  buyerIdentityId        String?
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
 
+  buyerIdentity  BuyerIdentity?             @relation("BuyerIdentityTransactions", fields: [buyerIdentityId], references: [id], onDelete: SetNull)
+  claimChallenges BuyerClaimChallenge[]
   business       Business                   @relation(fields: [businessId], references: [id], onDelete: Cascade)
   order          Order?                     @relation(fields: [orderId], references: [id], onDelete: SetNull)
   customer       Customer?                  @relation(fields: [customerId], references: [id], onDelete: SetNull)
@@ -775,6 +983,8 @@ model SocialTransaction {
   @@index([customerId])
   @@index([conversationId])
   @@index([buyerUserId])
+  @@index([buyerIdentityId])
+  @@index([buyerIdentityId, createdAt])
   @@index([publicTrackingToken])
   @@index([externalConversationId])
   @@index([externalUserId])

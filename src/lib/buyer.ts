@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { claimTransactionDirect } from "./buyer-identity";
 import {
   SocialPlatform,
   SocialSurface,
@@ -279,72 +280,12 @@ export async function claimGuestTransaction(
     throw new BuyerSecurityError("Missing user or token for claiming transaction");
   }
 
-  const [user, transaction] = await Promise.all([
-    prisma.user.findUnique({ where: { id: userId } }),
-    prisma.socialTransaction.findUnique({
-      where: { publicTrackingToken: token },
-      include: {
-        customer: true,
-        order: true,
-      },
-    }),
-  ]);
-
-  if (!user) {
-    throw new BuyerSecurityError("Authenticated user not found");
+  try {
+    return await claimTransactionDirect(userId, token);
+  } catch (err: any) {
+    if (err instanceof BuyerSecurityError) throw err;
+    throw new BuyerSecurityError(err.message || "Failed to claim transaction");
   }
-
-  if (!transaction) {
-    throw new BuyerSecurityError("Transaction not found");
-  }
-
-  // Security Verification:
-  // If transaction is already claimed by another user, reject
-  if (transaction.buyerUserId && transaction.buyerUserId !== user.id) {
-    throw new BuyerSecurityError(
-      "This transaction is already associated with another OrderFlow account"
-    );
-  }
-
-  return prisma.$transaction(async (tx) => {
-    // 1. Link transaction to authenticated user
-    const updated = await tx.socialTransaction.update({
-      where: { id: transaction.id },
-      data: {
-        buyerUserId: user.id,
-      },
-    });
-
-    // 2. Record internal timeline event
-    await tx.transactionTimelineEvent.create({
-      data: {
-        transactionId: transaction.id,
-        eventType: "TRANSACTION_CLAIMED",
-        title: "Transaction Claimed to OrderFlow Account",
-        description: `Associated with verified buyer account ${user.email}`,
-        actor: TimelineActor.BUYER,
-        visibility: TimelineVisibility.INTERNAL_ONLY,
-      },
-    });
-
-    // 3. Record confirmation notification for buyer
-    await tx.notification.create({
-      data: {
-        businessId: transaction.businessId,
-        orderId: transaction.orderId,
-        customerId: transaction.customerId,
-        transactionId: transaction.id,
-        userId: user.id,
-        channel: "IN_APP",
-        recipient: user.email,
-        title: "Purchase Successfully Claimed",
-        content: `Transaction for order #${transaction.order?.orderNumber || "N/A"} is now saved to your purchase dashboard.`,
-        status: "SENT",
-      },
-    });
-
-    return updated;
-  });
 }
 
 /**
@@ -359,9 +300,17 @@ export async function getBuyerPurchases(
     throw new BuyerSecurityError("User ID required");
   }
 
+  const identity = await prisma.buyerIdentity.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
+
   const transactions = await prisma.socialTransaction.findMany({
     where: {
-      buyerUserId: userId,
+      OR: [
+        { buyerUserId: userId },
+        ...(identity ? [{ buyerIdentityId: identity.id }] : []),
+      ],
     },
     include: {
       business: {

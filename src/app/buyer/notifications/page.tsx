@@ -2,6 +2,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -86,7 +87,26 @@ export default function BuyerNotifications() {
 
   return (
     <div className="min-h-screen bg-surface-50 py-8 px-4 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-3xl space-y-4">
+      <div className="mx-auto max-w-3xl space-y-6">
+        {/* Navigation Bar */}
+        <div className="flex items-center justify-between border-b border-surface-200 pb-4">
+          <div className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-lg bg-brand-600 text-white font-bold flex items-center justify-center text-sm">
+              OF
+            </div>
+            <span className="font-semibold text-surface-900">Your OrderFlow</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link href="/buyer/dashboard">
+              <Button variant="ghost" size="sm">Purchases</Button>
+            </Link>
+            <Button variant="default" size="sm">Notifications</Button>
+            <Link href="/buyer/identity">
+              <Button variant="ghost" size="sm">Identity</Button>
+            </Link>
+          </div>
+        </div>
+
         <h1 className="text-2xl font-bold text-surface-900">Notifications</h1>
         {loading && (
           <div className="space-y-2">
