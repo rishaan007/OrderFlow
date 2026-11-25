@@ -288,6 +288,8 @@ export async function confirmDraftTransaction(
     [SocialPlatform.OTHER]: "ONLINE",
     [SocialPlatform.TIKTOK]: "ONLINE",
     [SocialPlatform.TELEGRAM]: "ONLINE",
+    [SocialPlatform.MARKETPLACE]: "MARKETPLACE",
+    [SocialPlatform.API]: "API",
   };
 
   const orderSource = platformSourceMap[draft.platform] || "MANUAL";

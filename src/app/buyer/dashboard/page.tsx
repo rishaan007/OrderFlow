@@ -11,6 +11,8 @@ import {
   ChevronRight,
   ShieldCheck,
   UserCheck,
+  Download,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
@@ -157,12 +159,22 @@ export default function BuyerDashboard() {
           </div>
           <div className="flex items-center gap-2">
             <Button variant="default" size="sm">Purchases</Button>
+            <Link href="/marketplace">
+              <Button variant="ghost" size="sm" className="gap-1">
+                <Globe className="h-3.5 w-3.5" /> Discover
+              </Button>
+            </Link>
             <Link href="/buyer/notifications">
               <Button variant="ghost" size="sm">Notifications</Button>
             </Link>
             <Link href="/buyer/identity">
               <Button variant="ghost" size="sm">Identity</Button>
             </Link>
+            <a href="/api/buyer/export?format=CSV" download>
+              <Button variant="outline" size="sm" className="gap-1">
+                <Download className="h-3.5 w-3.5" /> Export CSV
+              </Button>
+            </a>
           </div>
         </div>
 

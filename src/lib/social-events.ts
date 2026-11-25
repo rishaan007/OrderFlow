@@ -219,6 +219,8 @@ export async function processNormalizedInboundMessage(options: {
     [SocialPlatform.OTHER]: ConversationChannel.OTHER,
     [SocialPlatform.TIKTOK]: ConversationChannel.OTHER,
     [SocialPlatform.TELEGRAM]: ConversationChannel.OTHER,
+    [SocialPlatform.MARKETPLACE]: ConversationChannel.OTHER,
+    [SocialPlatform.API]: ConversationChannel.OTHER,
   };
 
   const channel = channelMap[message.platform] || ConversationChannel.OTHER;

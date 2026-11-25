@@ -16,6 +16,8 @@ import {
   ChevronRight,
   ShieldCheck,
   Wallet,
+  Code2,
+  Globe,
 } from "lucide-react";
 import { AuthSession } from "@/types";
 
@@ -78,6 +80,19 @@ export function Sidebar({ session, onCloseMobile }: SidebarProps) {
       href: "/analytics",
       icon: BarChart3,
       active: pathname.startsWith("/analytics"),
+    },
+    {
+      title: "Developers",
+      href: "/developers",
+      icon: Code2,
+      active: pathname.startsWith("/developers"),
+      badge: "Phase 6",
+    },
+    {
+      title: "Marketplace",
+      href: "/marketplace",
+      icon: Globe,
+      active: pathname.startsWith("/marketplace"),
     },
     {
       title: "Settings",

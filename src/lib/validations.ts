@@ -65,6 +65,8 @@ export const createProductSchema = z.object({
   title: z.string().min(2, "Product title must be at least 2 characters").max(120),
   sku: z.string().optional().nullable(),
   category: z.string().optional().nullable(),
+  brand: z.string().optional().nullable(),
+  tags: z.array(z.string().max(50)).max(20).optional(),
   description: z.string().optional().nullable(),
   price: z.coerce.number().min(0, "Base price must be a non-negative number"),
   costPrice: z.coerce.number().min(0).optional().nullable(),
@@ -72,6 +74,7 @@ export const createProductSchema = z.object({
   lowStockThreshold: z.coerce.number().int().min(0).default(5),
   trackInventory: z.boolean().default(true),
   status: z.enum(["ACTIVE", "DRAFT", "ARCHIVED"]).default("ACTIVE"),
+  marketplaceDiscoverable: z.boolean().optional(),
   variants: z.array(productVariantInputSchema).optional(),
 });
 
@@ -317,6 +320,8 @@ export const socialPlatformEnum = z.enum([
   "X",
   "TIKTOK",
   "TELEGRAM",
+  "MARKETPLACE",
+  "API",
   "OTHER",
   "MANUAL",
 ]);
@@ -961,3 +966,160 @@ export const upsertPaymentProviderConfigSchema = z.object({
     .nullable(),
   metadata: z.record(z.unknown()).optional().nullable(),
 });
+
+// ============================================================================
+// Phase 6 — Network, Marketplace, Global Scale & Developer Ecosystem
+// ============================================================================
+
+export const privacyVisibilityEnum = z.enum([
+  "PRIVATE",
+  "SELLER_VISIBLE",
+  "NETWORK_VISIBLE",
+  "PUBLIC",
+]);
+
+export const reviewDisplayModeEnum = z.enum([
+  "VERIFIED_BUYER",
+  "NAME_INITIAL",
+  "ANONYMOUS",
+]);
+
+export const updateSellerNetworkProfileSchema = z.object({
+  displayName: z.string().min(2).max(120).optional(),
+  tagline: z.string().max(180).optional().nullable(),
+  about: z.string().max(2000).optional().nullable(),
+  categories: z.array(z.string().min(1).max(60)).max(10).optional(),
+  city: z.string().max(100).optional().nullable(),
+  state: z.string().max(100).optional().nullable(),
+  countryCode: z.string().length(2).optional().nullable(),
+  websiteUrl: z.string().url().optional().nullable().or(z.literal("")),
+  marketplaceOptIn: z.enum(["NOT_DISCOVERABLE", "DISCOVERABLE"]).optional(),
+  returnPolicySummary: z.string().max(1000).optional().nullable(),
+  supportedCurrencies: z.array(z.string().length(3)).max(20).optional(),
+  supportedLocales: z.array(z.string().min(2).max(10)).max(10).optional(),
+});
+
+export const sellerVerificationRequestSchema = z.object({
+  requestedTier: z.enum(["IDENTITY_VERIFIED", "BUSINESS_VERIFIED", "HIGH_CONFIDENCE"]),
+  verificationMethod: z.string().min(3).max(80),
+  evidenceReference: z.string().min(3).max(255),
+  reviewerNotes: z.string().max(1000).optional().nullable(),
+});
+
+export const marketplaceCheckoutSchema = z.object({
+  productId: z.string().uuid(),
+  variantId: z.string().uuid().optional().nullable(),
+  quantity: z.number().int().min(1).max(100).default(1),
+  buyerEmail: z.string().email().optional().nullable(),
+  buyerPhone: z.string().min(6).max(25).optional().nullable(),
+  shippingAddress: z.object({
+    name: z.string().min(1).max(120),
+    phone: z.string().min(6).max(25).optional().nullable(),
+    addressLine1: z.string().min(3).max(255),
+    addressLine2: z.string().max(255).optional().nullable(),
+    city: z.string().min(1).max(100),
+    state: z.string().max(100).optional().nullable(),
+    postalCode: z.string().max(30).optional().nullable(),
+    countryCode: z.string().length(2).default("US"),
+  }),
+  paymentProvider: paymentProviderEnum.default("MANUAL"),
+  notes: z.string().max(500).optional().nullable(),
+});
+
+export const createReviewSchema = z.object({
+  orderId: z.string().uuid("Valid orderId required"),
+  productId: z.string().uuid().optional().nullable(),
+  rating: z.number().int().min(1).max(5),
+  title: z.string().min(2).max(120).optional().nullable(),
+  comment: z.string().min(3).max(2000).optional().nullable(),
+  displayMode: reviewDisplayModeEnum.default("VERIFIED_BUYER"),
+});
+
+export const updateReviewSchema = z.object({
+  rating: z.number().int().min(1).max(5).optional(),
+  title: z.string().min(2).max(120).optional().nullable(),
+  comment: z.string().min(3).max(2000).optional().nullable(),
+  sellerResponse: z.string().min(2).max(1500).optional(),
+});
+
+export const reportReviewSchema = z.object({
+  reason: z.string().min(3).max(250),
+  details: z.string().max(1000).optional().nullable(),
+});
+
+export const createDeveloperAppSchema = z.object({
+  name: z.string().min(2).max(100),
+  description: z.string().max(500).optional().nullable(),
+  environment: z.enum(["SANDBOX", "LIVE"]).default("SANDBOX"),
+  businessId: z.string().uuid().optional().nullable(),
+  allowedOrigins: z.array(z.string().url()).max(10).optional(),
+});
+
+export const createApiKeySchema = z.object({
+  applicationId: z.string().uuid(),
+  name: z.string().min(2).max(100),
+  keyType: z.enum(["PUBLIC", "PRIVATE", "SERVER"]).default("SERVER"),
+  scopes: z.array(z.string().min(2).max(60)).min(1, "At least one API scope is required"),
+  expiresInDays: z.number().int().min(1).max(3650).optional(),
+});
+
+export const createDeveloperWebhookSchema = z.object({
+  applicationId: z.string().uuid(),
+  targetUrl: z.string().url("Valid HTTPS/HTTP webhook target URL required"),
+  description: z.string().max(300).optional().nullable(),
+  eventTypes: z.array(z.string().min(3).max(80)).min(1, "Select at least one normalized event"),
+});
+
+export const createTaxRuleSchema = z.object({
+  name: z.string().min(2).max(100),
+  countryCode: z.string().length(2),
+  stateCode: z.string().max(10).optional().nullable(),
+  category: z.string().max(80).optional().nullable(),
+  rateBasisPoints: z.number().int().min(0).max(10000),
+  mode: z.enum(["EXCLUSIVE", "INCLUSIVE"]).default("EXCLUSIVE"),
+  components: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(40),
+        rateBasisPoints: z.number().int().min(0).max(10000),
+      })
+    )
+    .optional(),
+});
+
+export const apiV1CreateOrderSchema = z.object({
+  idempotencyKey: z.string().min(4).max(128).optional(),
+  customerId: z.string().uuid().optional().nullable(),
+  newCustomer: z
+    .object({
+      name: z.string().min(2),
+      phone: z.string().optional().nullable(),
+      email: z.string().email().optional().nullable().or(z.literal("")),
+      instagramHandle: z.string().optional().nullable(),
+      address: z.string().optional().nullable(),
+    })
+    .optional()
+    .nullable(),
+  status: z
+    .enum(["DRAFT", "PENDING", "CONFIRMED", "PROCESSING"])
+    .default("PENDING"),
+  discount: z.coerce.number().min(0).default(0),
+  discountType: z.enum(["FIXED", "PERCENTAGE"]).default("FIXED"),
+  shipping: z.coerce.number().min(0).default(0),
+  tax: z.coerce.number().min(0).optional(),
+  countryCode: z.string().length(2).optional().nullable(),
+  stateCode: z.string().max(20).optional().nullable(),
+  shippingAddress: z.string().optional().nullable(),
+  notes: z.string().max(2000).optional().nullable(),
+  customerNotes: z.string().max(2000).optional().nullable(),
+  items: z.array(orderItemInputSchema).min(1, "Order must contain at least one item"),
+});
+
+export const connectIntegrationSchema = z.object({
+  providerSlug: z.string().min(2).max(100),
+  environment: z.enum(["SANDBOX", "LIVE"]).default("SANDBOX"),
+  externalAccountId: z.string().max(120).optional().nullable(),
+  credentials: z.record(z.string()).optional(),
+  config: z.record(z.unknown()).optional(),
+});
+
