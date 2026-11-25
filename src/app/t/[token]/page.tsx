@@ -45,6 +45,13 @@ export default function PublicTransactionRoomPage() {
   const [disputeSuccess, setDisputeSuccess] = useState<string | null>(null);
   const [disputeError, setDisputeError] = useState<string | null>(null);
 
+  // Evidence submission state
+  const [evidenceDisputeId, setEvidenceDisputeId] = useState<string | null>(null);
+  const [evidenceMediaUrl, setEvidenceMediaUrl] = useState("");
+  const [evidenceNotes, setEvidenceNotes] = useState("");
+  const [isSubmittingEvidence, setIsSubmittingEvidence] = useState(false);
+  const [evidenceSuccess, setEvidenceSuccess] = useState<string | null>(null);
+
   // Buyer session & claim state
   const [currentUser, setCurrentUser] = useState<{ id: string; email: string } | null>(null);
   const [isClaiming, setIsClaiming] = useState(false);
@@ -142,6 +149,39 @@ export default function PublicTransactionRoomPage() {
       setDisputeError(msg);
     } finally {
       setIsSubmittingDispute(false);
+    }
+  };
+
+  const handleEvidenceSubmit = async (disputeId: string) => {
+    if (!evidenceNotes.trim() && !evidenceMediaUrl.trim()) {
+      alert("Please provide either notes or an evidence URL");
+      return;
+    }
+    setIsSubmittingEvidence(true);
+    try {
+      const res = await fetch(`/api/disputes/${disputeId}/evidence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          evidenceType: "DISPUTE_EVIDENCE",
+          actor: "BUYER",
+          source: "TRANSACTION_ROOM",
+          trackingToken: token,
+          mediaUrl: evidenceMediaUrl.trim() || undefined,
+          notes: evidenceNotes.trim() || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to submit evidence");
+      setEvidenceSuccess(`Evidence submitted with content hash: ${json.data?.evidence?.contentHash?.slice(0, 16)}...`);
+      setEvidenceDisputeId(null);
+      setEvidenceMediaUrl("");
+      setEvidenceNotes("");
+      fetchTransaction();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsSubmittingEvidence(false);
     }
   };
 
@@ -640,18 +680,74 @@ export default function PublicTransactionRoomPage() {
 
             {/* Display active disputes if any */}
             {data.disputes && data.disputes.length > 0 && (
-              <div className="mt-4 space-y-2 border-t border-surface-100 pt-3">
+              <div className="mt-4 space-y-3 border-t border-surface-100 pt-3">
                 <h5 className="text-xs font-semibold text-surface-900">Submitted Disputes:</h5>
+                {evidenceSuccess && (
+                  <Alert variant="success" title="Evidence Added">
+                    {evidenceSuccess}
+                  </Alert>
+                )}
                 {data.disputes.map((d) => (
-                  <div key={d.id} className="p-3 rounded-lg bg-amber-50/60 border border-amber-200 text-xs">
+                  <div key={d.id} className="p-3 rounded-lg bg-amber-50/60 border border-amber-200 text-xs space-y-2">
                     <div className="flex items-center justify-between font-semibold text-amber-900">
                       <span>Reason: {d.reason}</span>
                       <Badge variant="warning">{d.status}</Badge>
                     </div>
                     {d.sellerResponse && (
-                      <div className="mt-1 text-surface-700">
+                      <div className="text-surface-700">
                         <span className="font-semibold text-surface-900">Seller Response: </span>
                         {d.sellerResponse}
+                      </div>
+                    )}
+                    {evidenceDisputeId === d.id ? (
+                      <div className="pt-2 border-t border-amber-200/60 space-y-2">
+                        <div className="font-semibold text-amber-950">Add Supporting Evidence</div>
+                        <input
+                          type="url"
+                          placeholder="Image / Document URL (optional)"
+                          value={evidenceMediaUrl}
+                          onChange={(e) => setEvidenceMediaUrl(e.target.value)}
+                          className="w-full rounded-md border border-amber-300 p-1.5 text-xs bg-white"
+                        />
+                        <textarea
+                          placeholder="Describe the issue or evidence..."
+                          rows={2}
+                          value={evidenceNotes}
+                          onChange={(e) => setEvidenceNotes(e.target.value)}
+                          className="w-full rounded-md border border-amber-300 p-1.5 text-xs bg-white"
+                        />
+                        <div className="flex items-center gap-2 justify-end">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setEvidenceDisputeId(null)}
+                            className="text-xs h-7"
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleEvidenceSubmit(d.id)}
+                            isLoading={isSubmittingEvidence}
+                            className="text-xs h-7"
+                          >
+                            Upload Evidence
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex justify-end pt-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setEvidenceDisputeId(d.id);
+                            setEvidenceSuccess(null);
+                          }}
+                          className="text-xs h-7 border-amber-300 text-amber-900 hover:bg-amber-100"
+                        >
+                          Attach Evidence
+                        </Button>
                       </div>
                     )}
                   </div>

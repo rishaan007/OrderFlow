@@ -302,6 +302,7 @@ export const socialPlatformEnum = z.enum([
   "INSTAGRAM",
   "FACEBOOK",
   "WHATSAPP",
+  "X",
   "TIKTOK",
   "TELEGRAM",
   "OTHER",
@@ -320,6 +321,8 @@ export const socialSurfaceEnum = z.enum([
   "DIRECT_CHAT",
   "BUSINESS_PROFILE",
   "CATALOG",
+  "X_DM",
+  "TWEET",
   "MANUAL_ENTRY",
   "EXTERNAL_LINK",
   "OTHER",
@@ -437,12 +440,12 @@ export const upsertChannelListingSchema = z.object({
   syncError: z.string().optional().nullable(),
 });
 
-export type CreateSocialTransactionInput = z.infer<typeof createSocialTransactionSchema>;
-export type CreateTimelineEventInput = z.infer<typeof createTimelineEventSchema>;
-export type AddEvidenceInput = z.infer<typeof addEvidenceSchema>;
-export type CreateDisputeInput = z.infer<typeof createDisputeSchema>;
+export type CreateSocialTransactionInput = z.input<typeof createSocialTransactionSchema>;
+export type CreateTimelineEventInput = z.input<typeof createTimelineEventSchema>;
+export type AddEvidenceInput = z.input<typeof addEvidenceSchema>;
+export type CreateDisputeInput = z.input<typeof createDisputeSchema>;
 export type UpdateDisputeInput = z.infer<typeof updateDisputeSchema>;
-export type UpsertChannelListingInput = z.infer<typeof upsertChannelListingSchema>;
+export type UpsertChannelListingInput = z.input<typeof upsertChannelListingSchema>;
 
 // --- Buyer OS & Experience Schemas ---
 
@@ -564,3 +567,148 @@ export type ClaimBuyerTransactionInput = z.infer<typeof claimBuyerTransactionSch
 export type CreateMergeRequestInput = z.infer<typeof createMergeRequestSchema>;
 export type ConfirmMergeRequestInput = z.infer<typeof confirmMergeRequestSchema>;
 
+// ============================================================================
+// Phase 4 — Trust, Risk, Reputation & Dispute Intelligence Schemas
+// ============================================================================
+
+export const trustSignalCategoryEnum = z.enum([
+  "IDENTITY",
+  "PAYMENT",
+  "FULFILLMENT",
+  "DELIVERY",
+  "COMMUNICATION",
+  "DISPUTE",
+  "REFUND",
+  "RETURN",
+  "ORDER_HISTORY",
+  "ACCOUNT_SECURITY",
+  "TRANSACTION",
+]);
+
+export const trustSignalDirectionEnum = z.enum(["POSITIVE", "NEUTRAL", "NEGATIVE"]);
+
+export const trustSignalSeverityEnum = z.enum([
+  "INFO",
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+  "CRITICAL",
+]);
+
+export const transactionRiskLevelEnum = z.enum([
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+  "REVIEW_REQUIRED",
+]);
+
+export const riskReviewStatusEnum = z.enum([
+  "OPEN",
+  "IN_PROGRESS",
+  "RESOLVED",
+  "DISMISSED",
+  "ESCALATED",
+]);
+
+export const disputeCategoryEnum = z.enum([
+  "ITEM_NOT_RECEIVED",
+  "ITEM_NOT_AS_DESCRIBED",
+  "DAMAGED_ITEM",
+  "WRONG_ITEM",
+  "PAYMENT_DISPUTE",
+  "REFUND_NOT_RECEIVED",
+  "DUPLICATE_PAYMENT",
+  "SELLER_NON_FULFILLMENT",
+  "BUYER_NON_PAYMENT",
+  "DELIVERY_DISPUTE",
+  "OTHER",
+]);
+
+export const createDisputeCaseSchema = z.object({
+  transactionId: z.string().min(1, "Transaction ID required"),
+  category: disputeCategoryEnum.default("OTHER"),
+  reason: z.string().min(3, "Reason required").max(500),
+  buyerNotes: z.string().max(2000).optional().nullable(),
+  refundAmount: z.coerce.number().min(0).optional().nullable(),
+  evidenceUrls: z.array(z.string().url("Valid evidence URL required")).optional(),
+  mediaUrl: z.string().url("Valid evidence media URL required").optional().nullable(),
+  initialEvidenceNotes: z.string().max(1000).optional().nullable(),
+});
+
+export const requestDisputeEvidenceSchema = z.object({
+  requestedFrom: z.enum(["BUYER", "SELLER"]),
+  notes: z.string().min(3, "Explanation of requested evidence required").max(1000),
+});
+
+export const submitDisputeEvidenceSchema = z.object({
+  evidenceType: z.enum([
+    "ORIGINAL_MESSAGE",
+    "ORDER_CONFIRMATION",
+    "PAYMENT_PROOF",
+    "PAYMENT_VERIFICATION",
+    "SHIPMENT_CREATION",
+    "CARRIER_TRACKING",
+    "DELIVERY_CONFIRMATION",
+    "BUYER_CONFIRMATION",
+    "SELLER_CONFIRMATION",
+    "RETURN_REQUEST",
+    "REFUND_RECORD",
+    "DISPUTE_EVIDENCE",
+    "COMMUNICATION_TRANSCRIPT",
+    "REFUND_PROOF",
+    "RETURN_TRACKING",
+  ]),
+  actor: z.enum(["BUYER", "SELLER", "SYSTEM", "CARRIER"]).default("BUYER"),
+  source: z.string().default("PORTAL"),
+  mediaUrl: z.string().url("Valid URL required").optional().nullable(),
+  notes: z.string().max(1000).optional().nullable(),
+  trackingToken: z.string().min(8).optional(),
+  metadata: z.record(z.unknown()).optional().nullable(),
+});
+
+export const reviewDisputeCaseSchema = z.object({
+  notes: z.string().max(1000).optional().nullable(),
+});
+
+export const resolveDisputeCaseSchema = z.object({
+  resolution: z.enum(["APPROVED", "REJECTED", "RESOLVED", "REFUNDED", "CLOSED"]),
+  resolutionReason: z.string().min(3, "Resolution reason required").max(500),
+  refundAmount: z.coerce.number().min(0).optional().nullable(),
+  notes: z.string().max(1000).optional().nullable(),
+});
+
+export const escalateDisputeCaseSchema = z.object({
+  reason: z.string().min(3, "Escalation reason required").max(500),
+});
+
+export const resolveRiskReviewSchema = z.object({
+  decision: z.enum(["APPROVED", "REJECTED", "ESCALATED", "DISMISSED"]),
+  notes: z.string().min(3, "Review notes required").max(1000),
+});
+
+export const recordTrustSignalSchema = z.object({
+  buyerIdentityId: z.string().uuid().optional().nullable(),
+  socialTransactionId: z.string().uuid().optional().nullable(),
+  orderId: z.string().uuid().optional().nullable(),
+  signalType: z.string().min(1).max(100),
+  category: trustSignalCategoryEnum,
+  direction: trustSignalDirectionEnum,
+  severity: trustSignalSeverityEnum,
+  scoreValue: z.number().optional().nullable(),
+  confidence: z.number().min(0).max(1).default(1.0),
+  explanation: z.string().min(3).max(1000),
+  sourceType: z.string().min(1).max(100),
+  sourceId: z.string().optional().nullable(),
+  sampleSize: z.number().int().min(0).optional().nullable(),
+  observationWindow: z.string().optional().nullable(),
+  validUntil: z.string().datetime().optional().nullable(),
+});
+
+export type CreateDisputeCaseInput = z.infer<typeof createDisputeCaseSchema>;
+export type RequestDisputeEvidenceInput = z.infer<typeof requestDisputeEvidenceSchema>;
+export type SubmitDisputeEvidenceInput = z.infer<typeof submitDisputeEvidenceSchema>;
+export type ReviewDisputeCaseInput = z.infer<typeof reviewDisputeCaseSchema>;
+export type ResolveDisputeCaseInput = z.infer<typeof resolveDisputeCaseSchema>;
+export type EscalateDisputeCaseInput = z.infer<typeof escalateDisputeCaseSchema>;
+export type ResolveRiskReviewInput = z.infer<typeof resolveRiskReviewSchema>;
+export type RecordTrustSignalInput = z.infer<typeof recordTrustSignalSchema>;

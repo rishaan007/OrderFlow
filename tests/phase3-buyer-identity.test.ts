@@ -412,7 +412,7 @@ describe("Phase 3: Cross-Platform Buyer Identity & Universal Buyer Experience", 
       // Create transactions from different platforms and associate with User 1
       const ig = await createSocialTransaction(businessAId, {
         platform: SocialPlatform.INSTAGRAM,
-        surface: SocialSurface.STORY_REPLY,
+        surface: SocialSurface.STORY,
       });
       const wa = await createSocialTransaction(businessAId, {
         platform: SocialPlatform.WHATSAPP,
@@ -811,8 +811,8 @@ describe("Phase 3: Cross-Platform Buyer Identity & Universal Buyer Experience", 
 
       // 2. Fetch public room
       const room = await getPublicTransactionByToken(tx.publicTrackingToken);
-      expect(room).toBeDefined();
-      expect(room.status).toBe(TransactionStatus.INTENT_CONFIRMED);
+      expect(room).not.toBeNull();
+      expect(room!.status).toBe(TransactionStatus.INTENT_CONFIRMED);
 
       // 3. Public dispute
       const dispute = await createPublicDispute(tx.publicTrackingToken, {

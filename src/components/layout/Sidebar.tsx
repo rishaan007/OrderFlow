@@ -60,6 +60,12 @@ export function Sidebar({ session, onCloseMobile }: SidebarProps) {
       active: pathname.startsWith("/customers"),
     },
     {
+      title: "Trust & Risk",
+      href: "/trust",
+      icon: ShieldCheck,
+      active: pathname.startsWith("/trust"),
+    },
+    {
       title: "Analytics",
       href: "/analytics",
       icon: BarChart3,
