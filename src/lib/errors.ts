@@ -68,6 +68,64 @@ export class PlanLimitExceededError extends AppError {
   }
 }
 
+export class ValidationError extends AppError {
+  constructor(message: string = "Validation error", details?: any) {
+    super(message, 400, "VALIDATION_ERROR", details);
+  }
+}
+
+export class InvalidStateTransitionError extends AppError {
+  constructor(
+    entity: string,
+    fromState: string,
+    toState: string,
+    message?: string
+  ) {
+    super(
+      message || `Invalid ${entity} state transition from ${fromState} to ${toState}`,
+      409,
+      "INVALID_STATE_TRANSITION",
+      { entity, fromState, toState }
+    );
+  }
+}
+
+export class IdempotencyConflictError extends AppError {
+  constructor(message: string = "Idempotency key conflict with different parameters", details?: any) {
+    super(message, 409, "IDEMPOTENCY_CONFLICT", details);
+  }
+}
+
+export class PaymentError extends AppError {
+  constructor(message: string = "Payment operation failed", details?: any) {
+    super(message, 422, "PAYMENT_ERROR", details);
+  }
+}
+
+export class RefundError extends AppError {
+  constructor(message: string = "Refund operation failed", details?: any) {
+    super(message, 422, "REFUND_ERROR", details);
+  }
+}
+
+export class ReturnError extends AppError {
+  constructor(message: string = "Return operation failed", details?: any) {
+    super(message, 422, "RETURN_ERROR", details);
+  }
+}
+
+export class ReconciliationError extends AppError {
+  constructor(message: string = "Reconciliation error", details?: any) {
+    super(message, 422, "RECONCILIATION_ERROR", details);
+  }
+}
+
+export class WebhookVerificationError extends AppError {
+  constructor(message: string = "Webhook signature verification failed") {
+    super(message, 401, "WEBHOOK_VERIFICATION_FAILED");
+  }
+}
+
 export function handleApiError(error: unknown, context?: { action?: string; businessId?: string; userId?: string }): NextResponse {
   if (error instanceof AppError) {
     logger.warn(`API Error [${error.code}]: ${error.message}`, {

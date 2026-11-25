@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import {
   MemberRole,
   OrderStatus,
+  FulfillmentStatus,
   PaymentStatus,
   OrderSource,
   ProductStatus,
@@ -11,6 +12,7 @@ import {
   MessageType,
   PaymentMethod,
   PaymentRecordStatus,
+  PaymentProvider,
   DeliveryPartner,
   ShipmentStatus,
   AutomationJobType,
@@ -28,10 +30,38 @@ import {
   EvidenceType,
   EvidenceVerificationState,
   DisputeStatus,
+  LedgerEntryType,
 } from "@prisma/client";
 import { mapOrderSourceToSocialContext } from "./transactions";
 import { extractOrderDetails } from "./order-extraction";
 import { queueAutomationJob, processPendingAutomationJobs } from "./automation";
+import {
+  calculateOrderTotalsMinorUnits,
+  toMinorUnits,
+  addMinorUnits,
+  minorUnitsToDecimal,
+  minorUnitsToMajorString,
+} from "./money";
+import { appendBalancedLedgerPair, getLedgerEntries, getOrderLedgerBalance } from "./ledger";
+import { createPaymentIntent, getPaymentIntents } from "./payment-intents";
+import { requestRefund, getRefunds } from "./refunds";
+import { createReturnRequest, getReturns, DEFAULT_RETURN_POLICY } from "./returns";
+import {
+  createOrchestratedShipment,
+  recordTrackingEvent,
+  generateShipmentLabel,
+} from "./shipping-provider";
+import {
+  reconcilePayments,
+  reconcileRefunds,
+  reconcileShipments,
+  getReconciliationRuns,
+} from "./reconciliation";
+import {
+  assertValidTransition,
+  SHIPMENT_TRANSITIONS,
+  mapShipmentStatusToFulfillmentStatus,
+} from "./state-machines";
 import {
   assertCanCreateOrder,
   getSubscriptionUsage,
@@ -788,6 +818,7 @@ export function getTenantDb(businessId: string) {
         id: o.id,
         orderNumber: o.orderNumber,
         status: o.status,
+        fulfillmentStatus: o.fulfillmentStatus,
         paymentStatus: o.paymentStatus,
         source: o.source,
         currency: o.currency,
@@ -797,6 +828,8 @@ export function getTenantDb(businessId: string) {
         shipping: Number(o.shipping),
         tax: Number(o.tax),
         totalAmount: Number(o.totalAmount),
+        amountPaid: Number(o.amountPaid || 0),
+        refundedAmountMinorUnits: o.refundedAmountMinorUnits || 0,
         stockDeducted: o.stockDeducted,
         notes: o.notes,
         customerNotes: o.customerNotes,
@@ -878,14 +911,19 @@ export function getTenantDb(businessId: string) {
 
       if (!o) return null;
 
+      const totalMinor = toMinorUnits(o.totalAmount, o.currency);
+      const paidMinor = toMinorUnits(o.amountPaid || 0, o.currency);
+      const outstandingMinor = Math.max(0, totalMinor - paidMinor);
+
       const totalAmount = Number(o.totalAmount);
       const amountPaid = Number(o.amountPaid || 0);
-      const outstandingBalance = Math.max(0, Number((totalAmount - amountPaid).toFixed(2)));
+      const outstandingBalance = Number(minorUnitsToMajorString(outstandingMinor, o.currency));
 
       return {
         id: o.id,
         orderNumber: o.orderNumber,
         status: o.status,
+        fulfillmentStatus: o.fulfillmentStatus,
         paymentStatus: o.paymentStatus,
         source: o.source,
         currency: o.currency,
@@ -897,6 +935,7 @@ export function getTenantDb(businessId: string) {
         totalAmount,
         amountPaid,
         outstandingBalance,
+        refundedAmountMinorUnits: o.refundedAmountMinorUnits || 0,
         stockDeducted: o.stockDeducted,
         notes: o.notes,
         customerNotes: o.customerNotes,
@@ -1057,35 +1096,27 @@ export function getTenantDb(businessId: string) {
           resolvedCustomerId = newCust.id;
         }
 
-        // 3. Calculate Item totals and Subtotal
-        const calculatedItems = data.items.map((item) => {
-          const itemTotal = Number((item.quantity * item.unitPrice).toFixed(2));
-          return {
-            ...item,
-            totalPrice: itemTotal,
-          };
+        // 3. Calculate Item totals and Subtotal using integer minor-unit arithmetic
+        const totals = calculateOrderTotalsMinorUnits({
+          items: data.items,
+          discount: data.discount,
+          discountType: data.discountType,
+          shipping: data.shipping,
+          tax: data.tax,
+          currency,
         });
 
-        const subtotal = calculatedItems.reduce(
-          (acc, item) => acc + item.totalPrice,
-          0
-        );
+        const calculatedItems = data.items.map((item, idx) => ({
+          ...item,
+          unitPriceDecimal: totals.items[idx].unitPriceDecimal,
+          totalPrice: totals.items[idx].totalPriceDecimal,
+        }));
 
-        // 4. Calculate Discounts, Shipping, Tax and Final Total
-        let discountAmount = 0;
-        if (data.discount && data.discount > 0) {
-          if (data.discountType === "PERCENTAGE") {
-            discountAmount = Number(((subtotal * data.discount) / 100).toFixed(2));
-          } else {
-            discountAmount = Math.min(subtotal, data.discount);
-          }
-        }
-
-        const shippingAmount = Math.max(0, data.shipping ?? 0);
-        const taxAmount = Math.max(0, data.tax ?? 0);
-        const totalAmount = Number(
-          (subtotal - discountAmount + shippingAmount + taxAmount).toFixed(2)
-        );
+        const subtotal = totals.subtotalDecimal;
+        const discountAmount = totals.discountDecimal;
+        const shippingAmount = totals.shippingDecimal;
+        const taxAmount = totals.taxDecimal;
+        const totalAmount = totals.totalDecimal;
 
         // 5. Automatic Inventory Deduction if order is created in confirmed/processing status
         const initialStatus = data.status ?? OrderStatus.PENDING;
@@ -1143,6 +1174,7 @@ export function getTenantDb(businessId: string) {
             orderNumber,
             customerId: resolvedCustomerId,
             status: initialStatus,
+            fulfillmentStatus: FulfillmentStatus.UNFULFILLED,
             paymentStatus: data.paymentStatus ?? PaymentStatus.PENDING,
             source: data.source ?? OrderSource.MANUAL,
             currency,
@@ -1157,6 +1189,7 @@ export function getTenantDb(businessId: string) {
             customerNotes: data.customerNotes,
             requiresApproval: data.requiresApproval ?? false,
             shippingAddress: data.shippingAddress,
+            returnPolicy: DEFAULT_RETURN_POLICY as unknown as Prisma.InputJsonValue,
             conversationId: data.conversationId ?? null,
             items: {
               create: calculatedItems.map((item) => ({
@@ -1166,7 +1199,7 @@ export function getTenantDb(businessId: string) {
                 variantTitle: item.variantTitle,
                 sku: item.sku,
                 quantity: item.quantity,
-                unitPrice: item.unitPrice,
+                unitPrice: item.unitPriceDecimal,
                 totalPrice: item.totalPrice,
               })),
             },
@@ -2310,6 +2343,14 @@ export function getTenantDb(businessId: string) {
       const initialStatus = isVerified
         ? PaymentRecordStatus.VERIFIED
         : PaymentRecordStatus.PENDING_VERIFICATION;
+      const payAmountMinor = toMinorUnits(data.amount, order.currency);
+      const payAmountDecimal = minorUnitsToDecimal(payAmountMinor, order.currency);
+      const mappedProvider =
+        method === PaymentMethod.RAZORPAY
+          ? PaymentProvider.RAZORPAY
+          : method === PaymentMethod.STRIPE
+          ? PaymentProvider.STRIPE
+          : PaymentProvider.MANUAL;
 
       return prisma.$transaction(async (tx) => {
         const payment = await tx.payment.create({
@@ -2317,9 +2358,11 @@ export function getTenantDb(businessId: string) {
             businessId,
             orderId,
             customerId: order.customerId,
-            amount: data.amount,
+            amount: payAmountDecimal,
+            amountMinorUnits: payAmountMinor,
             currency: order.currency,
             method,
+            provider: mappedProvider,
             status: initialStatus,
             referenceNumber: data.referenceNumber || null,
             screenshotUrl: data.screenshotUrl || null,
@@ -2330,21 +2373,21 @@ export function getTenantDb(businessId: string) {
         });
 
         if (isVerified) {
-          const currentPaid = Number(order.amountPaid || 0);
-          const newPaid = Number((currentPaid + data.amount).toFixed(2));
-          const totalAmount = Number(order.totalAmount);
+          const currentPaidMinor = toMinorUnits(order.amountPaid || 0, order.currency);
+          const newPaidMinor = addMinorUnits(currentPaidMinor, payAmountMinor);
+          const totalMinor = toMinorUnits(order.totalAmount, order.currency);
 
           let newPaymentStatus: PaymentStatus = PaymentStatus.PENDING;
-          if (newPaid >= totalAmount) {
+          if (newPaidMinor >= totalMinor) {
             newPaymentStatus = PaymentStatus.PAID;
-          } else if (newPaid > 0) {
+          } else if (newPaidMinor > 0) {
             newPaymentStatus = PaymentStatus.PARTIALLY_PAID;
           }
 
           await tx.order.update({
             where: { id: orderId },
             data: {
-              amountPaid: newPaid,
+              amountPaid: minorUnitsToDecimal(newPaidMinor, order.currency),
               paymentStatus: newPaymentStatus,
             },
           });
@@ -2352,9 +2395,34 @@ export function getTenantDb(businessId: string) {
           if (order.customerId) {
             await tx.customer.update({
               where: { id: order.customerId },
-              data: { totalSpent: { increment: data.amount } },
+              data: { totalSpent: { increment: payAmountDecimal } },
             });
           }
+
+          const socialTx = await tx.socialTransaction.findUnique({
+            where: { orderId },
+            select: { id: true },
+          });
+
+          await appendBalancedLedgerPair(
+            {
+              businessId,
+              orderId,
+              socialTransactionId: socialTx?.id ?? null,
+              paymentId: payment.id,
+              entryType: LedgerEntryType.PAYMENT_CAPTURED,
+              debitAccount: "PROVIDER_CLEARING",
+              creditAccount: "ORDER_RECEIVABLE",
+              amountMinorUnits: payAmountMinor,
+              currency: order.currency,
+              referenceType: "PAYMENT",
+              referenceId: payment.id,
+              provider: mappedProvider,
+              idempotencyKeyPrefix: `payment-verify:${payment.id}`,
+              description: `Verified ${method} payment (${minorUnitsToMajorString(payAmountMinor, order.currency)} ${order.currency})`,
+            },
+            tx
+          );
 
           await tx.auditLog.create({
             data: {
@@ -2365,10 +2433,14 @@ export function getTenantDb(businessId: string) {
               entityId: payment.id,
               metadata: {
                 orderId,
-                amount: data.amount,
+                amount: Number(payAmountDecimal),
+                amountMinorUnits: payAmountMinor,
                 method,
                 newPaymentStatus,
-                outstandingBalance: Math.max(0, totalAmount - newPaid),
+                outstandingBalance: Math.max(
+                  0,
+                  Number(minorUnitsToMajorString(Math.max(0, totalMinor - newPaidMinor), order.currency))
+                ),
               },
             },
           });
@@ -2418,32 +2490,38 @@ export function getTenantDb(businessId: string) {
 
       return prisma.$transaction(async (tx) => {
         if (data.action === "VERIFY") {
+          const payAmountMinor =
+            payment.amountMinorUnits ?? toMinorUnits(payment.amount, payment.currency);
+
           const updatedPayment = await tx.payment.update({
             where: { id: paymentId },
             data: {
               status: PaymentRecordStatus.VERIFIED,
+              amountMinorUnits: payAmountMinor,
               verifiedBy: verifiedByUserId || "MERCHANT",
               verifiedAt: new Date(),
               notes: data.notes || payment.notes,
             },
           });
 
-          const currentPaid = Number(payment.order.amountPaid || 0);
-          const payAmount = Number(payment.amount);
-          const newPaid = Number((currentPaid + payAmount).toFixed(2));
-          const totalAmount = Number(payment.order.totalAmount);
+          const currentPaidMinor = toMinorUnits(
+            payment.order.amountPaid || 0,
+            payment.currency
+          );
+          const newPaidMinor = addMinorUnits(currentPaidMinor, payAmountMinor);
+          const totalMinor = toMinorUnits(payment.order.totalAmount, payment.currency);
 
           let newPaymentStatus: PaymentStatus = PaymentStatus.PENDING;
-          if (newPaid >= totalAmount) {
+          if (newPaidMinor >= totalMinor) {
             newPaymentStatus = PaymentStatus.PAID;
-          } else if (newPaid > 0) {
+          } else if (newPaidMinor > 0) {
             newPaymentStatus = PaymentStatus.PARTIALLY_PAID;
           }
 
           await tx.order.update({
             where: { id: payment.orderId },
             data: {
-              amountPaid: newPaid,
+              amountPaid: minorUnitsToDecimal(newPaidMinor, payment.currency),
               paymentStatus: newPaymentStatus,
             },
           });
@@ -2451,9 +2529,37 @@ export function getTenantDb(businessId: string) {
           if (payment.customerId) {
             await tx.customer.update({
               where: { id: payment.customerId },
-              data: { totalSpent: { increment: payAmount } },
+              data: {
+                totalSpent: { increment: minorUnitsToDecimal(payAmountMinor, payment.currency) },
+              },
             });
           }
+
+          const socialTx = await tx.socialTransaction.findUnique({
+            where: { orderId: payment.orderId },
+          });
+
+          await appendBalancedLedgerPair(
+            {
+              businessId,
+              orderId: payment.orderId,
+              socialTransactionId: socialTx?.id ?? null,
+              paymentId: payment.id,
+              entryType: LedgerEntryType.PAYMENT_CAPTURED,
+              debitAccount: "PROVIDER_CLEARING",
+              creditAccount: "ORDER_RECEIVABLE",
+              amountMinorUnits: payAmountMinor,
+              currency: payment.currency,
+              referenceType: "PAYMENT",
+              referenceId: payment.id,
+              provider: payment.provider,
+              idempotencyKeyPrefix: `payment-verify:${payment.id}`,
+              description: `Verified ${payment.method} payment (${minorUnitsToMajorString(payAmountMinor, payment.currency)} ${payment.currency})`,
+            },
+            tx
+          );
+
+          const payAmount = Number(minorUnitsToMajorString(payAmountMinor, payment.currency));
 
           await tx.auditLog.create({
             data: {
@@ -2465,17 +2571,17 @@ export function getTenantDb(businessId: string) {
               metadata: {
                 orderId: payment.orderId,
                 amount: payAmount,
+                amountMinorUnits: payAmountMinor,
                 newPaymentStatus,
-                outstandingBalance: Math.max(0, totalAmount - newPaid),
+                outstandingBalance: Number(
+                  minorUnitsToMajorString(Math.max(0, totalMinor - newPaidMinor), payment.currency)
+                ),
               },
             },
           });
 
           // Social Transaction synchronization
           try {
-            const socialTx = await tx.socialTransaction.findUnique({
-              where: { orderId: payment.orderId },
-            });
             if (socialTx) {
               await tx.transactionTimelineEvent.create({
                 data: {
@@ -2703,6 +2809,7 @@ export function getTenantDb(businessId: string) {
             businessId,
             orderId,
             carrier,
+            provider: carrier.toString(),
             trackingNumber: data.trackingNumber || null,
             trackingUrl: data.trackingUrl || null,
             status: initialStatus,
@@ -2716,16 +2823,30 @@ export function getTenantDb(businessId: string) {
           },
         });
 
-        // If status is dispatched or in-transit, advance order status to SHIPPED
-        if (
-          initialStatus === ShipmentStatus.DISPATCHED ||
-          initialStatus === ShipmentStatus.IN_TRANSIT
-        ) {
-          await tx.order.update({
-            where: { id: orderId },
-            data: { status: OrderStatus.SHIPPED },
-          });
-        }
+        await tx.trackingEvent.create({
+          data: {
+            shipmentId: shipment.id,
+            businessId,
+            provider: carrier.toString(),
+            trackingNumber: shipment.trackingNumber,
+            status: initialStatus,
+            rawStatus: initialStatus,
+            description: `Shipment initialized with ${carrier}`,
+            occurredAt: new Date(),
+          },
+        });
+
+        // Update Order fulfillmentStatus cleanly alongside Order.status
+        await tx.order.update({
+          where: { id: orderId },
+          data: {
+            fulfillmentStatus: mapShipmentStatusToFulfillmentStatus(initialStatus),
+            ...(initialStatus === ShipmentStatus.DISPATCHED ||
+            initialStatus === ShipmentStatus.IN_TRANSIT
+              ? { status: OrderStatus.SHIPPED }
+              : {}),
+          },
+        });
 
         await tx.auditLog.create({
           data: {
@@ -2801,6 +2922,10 @@ export function getTenantDb(businessId: string) {
         throw new TenantAccessError("Shipment not found in current workspace");
       }
 
+      assertValidTransition("Shipment", SHIPMENT_TRANSITIONS, shipment.status, data.status, {
+        allowSameState: true,
+      });
+
       return prisma.$transaction(async (tx) => {
         const isDelivered = data.status === ShipmentStatus.DELIVERED;
         const isRto = data.status === ShipmentStatus.RETURNED_TO_ORIGIN;
@@ -2813,6 +2938,26 @@ export function getTenantDb(businessId: string) {
             failureReason: data.failureReason || null,
             notes: data.notes || shipment.notes,
             ...(isDelivered ? { actualDelivery: new Date() } : {}),
+          },
+        });
+
+        await tx.trackingEvent.create({
+          data: {
+            shipmentId: shipment.id,
+            businessId,
+            provider: shipment.provider || shipment.carrier.toString(),
+            trackingNumber: shipment.trackingNumber,
+            status: data.status,
+            rawStatus: data.status,
+            description: data.failureReason || data.notes || `Status updated to ${data.status}`,
+            occurredAt: new Date(),
+          },
+        });
+
+        await tx.order.update({
+          where: { id: shipment.orderId },
+          data: {
+            fulfillmentStatus: mapShipmentStatusToFulfillmentStatus(data.status),
           },
         });
 
@@ -3037,5 +3182,41 @@ export function getTenantDb(businessId: string) {
         },
       };
     },
+
+    // -------------------------------------------------------------
+    // Phase 5: Commerce Infrastructure Convenience Wrappers
+    // -------------------------------------------------------------
+    createPaymentIntent: (input: Parameters<typeof createPaymentIntent>[1], actorUserId?: string) =>
+      createPaymentIntent(businessId, input, actorUserId),
+    getPaymentIntents: (filter?: Parameters<typeof getPaymentIntents>[1]) =>
+      getPaymentIntents(businessId, filter),
+    requestRefund: (input: Parameters<typeof requestRefund>[1], actorUserId?: string) =>
+      requestRefund(businessId, input, actorUserId),
+    getRefunds: (filter?: Parameters<typeof getRefunds>[1]) =>
+      getRefunds(businessId, filter),
+    createReturnRequest: (
+      input: Parameters<typeof createReturnRequest>[1],
+      options?: Parameters<typeof createReturnRequest>[2]
+    ) => createReturnRequest(businessId, input, options),
+    getReturns: (filter?: Parameters<typeof getReturns>[1]) =>
+      getReturns(businessId, filter),
+    getLedgerEntries: (filter?: Parameters<typeof getLedgerEntries>[1]) =>
+      getLedgerEntries(businessId, filter),
+    getOrderLedgerBalance: (orderId: string) =>
+      getOrderLedgerBalance(businessId, orderId),
+    reconcilePayments: (options?: Parameters<typeof reconcilePayments>[1]) =>
+      reconcilePayments(businessId, options),
+    reconcileRefunds: (options?: Parameters<typeof reconcileRefunds>[1]) =>
+      reconcileRefunds(businessId, options),
+    reconcileShipments: (options?: Parameters<typeof reconcileShipments>[1]) =>
+      reconcileShipments(businessId, options),
+    getReconciliationRuns: (filter?: Parameters<typeof getReconciliationRuns>[1]) =>
+      getReconciliationRuns(businessId, filter),
+    createOrchestratedShipment: (input: Parameters<typeof createOrchestratedShipment>[1]) =>
+      createOrchestratedShipment(businessId, input),
+    recordTrackingEvent: (shipmentId: string, input: Parameters<typeof recordTrackingEvent>[2]) =>
+      recordTrackingEvent(businessId, shipmentId, input),
+    generateShipmentLabel: (shipmentId: string) =>
+      generateShipmentLabel(businessId, shipmentId),
   };
 }

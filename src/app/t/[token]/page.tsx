@@ -19,6 +19,7 @@ import {
   ShoppingBag,
   Send,
   AlertCircle,
+  RotateCcw,
 } from "lucide-react";
 import { PublicTransactionResponse } from "@/types";
 import { TransactionTimeline } from "@/components/transactions/TransactionTimeline";
@@ -27,7 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDate } from "@/lib/utils";
+import { formatDate, formatMinorUnitsCurrency } from "@/lib/utils";
 
 export default function PublicTransactionRoomPage() {
   const params = useParams();
@@ -57,6 +58,14 @@ export default function PublicTransactionRoomPage() {
   const [isClaiming, setIsClaiming] = useState(false);
   const [claimSuccess, setClaimSuccess] = useState<string | null>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
+
+  // Phase 5: Structured return submission state
+  const [showReturnForm, setShowReturnForm] = useState(false);
+  const [returnReason, setReturnReason] = useState("WRONG_ITEM");
+  const [returnNotes, setReturnNotes] = useState("");
+  const [isSubmittingReturn, setIsSubmittingReturn] = useState(false);
+  const [returnSuccess, setReturnSuccess] = useState<string | null>(null);
+  const [returnError, setReturnError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/session")
@@ -182,6 +191,35 @@ export default function PublicTransactionRoomPage() {
       alert(err.message);
     } finally {
       setIsSubmittingEvidence(false);
+    }
+  };
+
+  const handleReturnSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmittingReturn(true);
+    setReturnError(null);
+    setReturnSuccess(null);
+    try {
+      const res = await fetch(`/api/public/transactions/${encodeURIComponent(token)}/returns`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: returnReason,
+          buyerNotes: returnNotes.trim() || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to submit return request");
+      }
+      setReturnSuccess("Your return request has been registered and linked to this order.");
+      setReturnNotes("");
+      setShowReturnForm(false);
+      await fetchTransaction();
+    } catch (err: unknown) {
+      setReturnError(err instanceof Error ? err.message : "Return request error");
+    } finally {
+      setIsSubmittingReturn(false);
     }
   };
 
@@ -467,7 +505,7 @@ export default function PublicTransactionRoomPage() {
                       <option value="">Select method</option>
                       <option value="BANK_TRANSFER">Bank Transfer</option>
                       <option value="UPI">UPI</option>
-                      <option value="CREDIT_CARD">Credit Card</option>
+                      <option value="CARD">Credit / Debit Card</option>
                     </select>
                     <input name="referenceNumber" placeholder="Reference / Transaction ID" required className="w-full rounded-md border p-2" />
                     <input name="screenshotUrl" placeholder="Screenshot URL (optional)" className="w-full rounded-md border p-2" />
@@ -519,11 +557,51 @@ export default function PublicTransactionRoomPage() {
                 ))}
               </div>
 
-              {/* Total Summary */}
-              <div className="pt-3 border-t border-surface-200 flex items-center justify-between font-bold text-base text-surface-950">
-                <span>Total Amount</span>
-                <span>{data.order.currency} {data.order.totalAmount}</span>
+              {/* Total & Payment Summary ("Did I pay?" / "Has my refund been issued?") */}
+              <div className="pt-3 border-t border-surface-200 space-y-1.5 text-sm">
+                <div className="flex items-center justify-between font-bold text-base text-surface-950">
+                  <span>Total Amount</span>
+                  <span>{data.order.currency} {data.order.totalAmount}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-surface-600">
+                  <span>Verified Amount Paid</span>
+                  <span className="font-semibold text-emerald-700">
+                    {data.order.currency} {data.order.amountPaid}
+                  </span>
+                </div>
+                {(data.order.outstandingBalance ?? 0) > 0 && (
+                  <div className="flex items-center justify-between text-xs text-amber-700">
+                    <span>Remaining Balance Due</span>
+                    <span className="font-semibold">
+                      {data.order.currency} {data.order.outstandingBalance}
+                    </span>
+                  </div>
+                )}
+                {(data.order.refundedAmount ?? 0) > 0 && (
+                  <div className="flex items-center justify-between text-xs text-rose-700">
+                    <span>Refunded Amount</span>
+                    <span className="font-semibold">
+                      {data.order.currency} {data.order.refundedAmount}
+                    </span>
+                  </div>
+                )}
               </div>
+
+              {data.order.refunds && data.order.refunds.length > 0 && (
+                <div className="rounded-lg bg-rose-50/70 border border-rose-200 p-3 space-y-1.5 text-xs">
+                  <div className="font-semibold text-rose-900">Refund Status</div>
+                  {data.order.refunds.map((rf) => (
+                    <div key={rf.id} className="flex items-center justify-between text-rose-800">
+                      <span>
+                        {rf.type.replace(/_/g, " ")} — {rf.reason}
+                      </span>
+                      <span className="font-semibold">
+                        {formatMinorUnitsCurrency(rf.amountMinorUnits, rf.currency)} ({rf.status})
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Shipping Destination */}
               {data.order.shippingAddress && (
@@ -579,6 +657,140 @@ export default function PublicTransactionRoomPage() {
                 <p className="text-xs text-surface-500">
                   Carrier dispatch booked. Tracking details will update automatically once scanned by the courier.
                 </p>
+              )}
+
+              {data.order.shipment.trackingEvents && data.order.shipment.trackingEvents.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-surface-100 space-y-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-surface-500">
+                    Carrier Scan History
+                  </div>
+                  {data.order.shipment.trackingEvents.map((ev, idx) => (
+                    <div key={idx} className="flex items-start justify-between text-xs text-surface-600">
+                      <div>
+                        <span className="font-semibold text-surface-800">{ev.status.replace(/_/g, " ")}</span>
+                        {ev.description && <span> — {ev.description}</span>}
+                        {ev.location && <span className="text-surface-400"> ({ev.location})</span>}
+                      </div>
+                      <span className="text-[11px] text-surface-400 shrink-0 ml-2">
+                        {formatDate(ev.occurredAt)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* 3b. Phase 5: Returns & Eligibility Section ("Can I return it?") */}
+        {data.order && (
+          <Card className="border-surface-200 shadow-sm">
+            <CardHeader className="pb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+                    <RotateCcw className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-sm font-semibold">Returns & Eligibility</CardTitle>
+                    <CardDescription className="text-xs">
+                      {data.order.returnEligibility
+                        ? `${data.order.returnEligibility.returnWindowDays}-day return policy (${
+                            data.order.returnEligibility.eligible ? "Eligible for return" : "Check eligibility notes"
+                          })`
+                        : "Structured return requests tied to your order"}
+                    </CardDescription>
+                  </div>
+                </div>
+                {data.order.returnEligibility?.eligible && !showReturnForm && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowReturnForm(true)}
+                    className="text-xs gap-1"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Request Return
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3 text-xs">
+              {returnSuccess && (
+                <Alert variant="success" title="Return Submitted">
+                  {returnSuccess}
+                </Alert>
+              )}
+              {returnError && (
+                <Alert variant="error" title="Return Error">
+                  {returnError}
+                </Alert>
+              )}
+              {data.order.returnEligibility && !data.order.returnEligibility.eligible && (
+                <div className="rounded-lg bg-surface-50 border border-surface-200 p-2.5 text-surface-600">
+                  {data.order.returnEligibility.reasons[0] || "Currently outside standard return window."}
+                </div>
+              )}
+
+              {showReturnForm && (
+                <form onSubmit={handleReturnSubmit} className="space-y-3 rounded-lg border border-surface-200 p-3 bg-surface-50/50">
+                  <div>
+                    <label className="block font-medium text-surface-700 mb-1">Return Reason</label>
+                    <select
+                      value={returnReason}
+                      onChange={(e) => setReturnReason(e.target.value)}
+                      className="w-full rounded-md border border-surface-300 px-2.5 py-1.5 bg-white text-xs"
+                    >
+                      <option value="WRONG_ITEM">Wrong Item Delivered</option>
+                      <option value="DAMAGED_ITEM">Damaged Item</option>
+                      <option value="DEFECTIVE_ITEM">Defective Item</option>
+                      <option value="ITEM_NOT_AS_DESCRIBED">Not as Described</option>
+                      <option value="SIZE_ISSUE">Size / Fit Issue</option>
+                      <option value="MISSING_ITEM">Missing Item</option>
+                      <option value="CHANGED_MIND">Changed Mind</option>
+                      <option value="OTHER">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-medium text-surface-700 mb-1">Details for Seller</label>
+                    <textarea
+                      rows={2}
+                      value={returnNotes}
+                      onChange={(e) => setReturnNotes(e.target.value)}
+                      placeholder="Describe the condition or items you wish to return..."
+                      className="w-full rounded-md border border-surface-300 px-2.5 py-1.5 bg-white text-xs"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setShowReturnForm(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" size="sm" isLoading={isSubmittingReturn}>
+                      Submit Return Request
+                    </Button>
+                  </div>
+                </form>
+              )}
+
+              {data.order.returns && data.order.returns.length > 0 && (
+                <div className="space-y-2">
+                  {data.order.returns.map((ret) => (
+                    <div key={ret.id} className="rounded-lg border border-surface-200 p-3 flex flex-col gap-1">
+                      <div className="flex items-center justify-between font-semibold">
+                        <span>{ret.reason.replace(/_/g, " ")}</span>
+                        <Badge variant={ret.status === "REFUNDED" ? "success" : "warning"}>
+                          {ret.status}
+                        </Badge>
+                      </div>
+                      <div className="text-surface-600">
+                        Requested: {formatMinorUnitsCurrency(ret.requestedAmountMinorUnits, ret.currency)}
+                        {ret.trackingNumber && ` • Return Tracking: ${ret.trackingNumber}`}
+                      </div>
+                      {ret.sellerResponse && (
+                        <div className="text-surface-700">Seller Note: {ret.sellerResponse}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>

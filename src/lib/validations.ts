@@ -226,7 +226,19 @@ export type CreateOrderFromConversationInput = z.infer<typeof createOrderFromCon
 
 export const recordPaymentSchema = z.object({
   amount: z.coerce.number().positive("Payment amount must be greater than zero"),
-  method: z.enum(["UPI", "CASH", "BANK_TRANSFER", "CARD", "OTHER"]).default("UPI"),
+  method: z
+    .enum([
+      "UPI",
+      "CASH",
+      "BANK_TRANSFER",
+      "CARD",
+      "RAZORPAY",
+      "STRIPE",
+      "WALLET",
+      "NET_BANKING",
+      "OTHER",
+    ])
+    .default("UPI"),
   referenceNumber: z.string().optional().nullable(),
   screenshotUrl: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
@@ -712,3 +724,240 @@ export type ResolveDisputeCaseInput = z.infer<typeof resolveDisputeCaseSchema>;
 export type EscalateDisputeCaseInput = z.infer<typeof escalateDisputeCaseSchema>;
 export type ResolveRiskReviewInput = z.infer<typeof resolveRiskReviewSchema>;
 export type RecordTrustSignalInput = z.infer<typeof recordTrustSignalSchema>;
+
+// ============================================================================
+// Phase 5 — Commerce Infrastructure (Payments, Logistics, Returns, Reconciliation)
+// ============================================================================
+
+export const paymentProviderEnum = z.enum([
+  "RAZORPAY",
+  "STRIPE",
+  "MANUAL",
+  "OTHER",
+]);
+
+export const paymentMethodExtendedEnum = z.enum([
+  "UPI",
+  "CASH",
+  "BANK_TRANSFER",
+  "CARD",
+  "RAZORPAY",
+  "STRIPE",
+  "WALLET",
+  "NET_BANKING",
+  "OTHER",
+]);
+
+export const returnReasonEnum = z.enum([
+  "WRONG_ITEM",
+  "DAMAGED_ITEM",
+  "ITEM_NOT_AS_DESCRIBED",
+  "SIZE_ISSUE",
+  "CHANGED_MIND",
+  "DEFECTIVE_ITEM",
+  "MISSING_ITEM",
+  "OTHER",
+]);
+
+export const returnStatusEnum = z.enum([
+  "REQUESTED",
+  "APPROVED",
+  "REJECTED",
+  "LABEL_CREATED",
+  "IN_TRANSIT",
+  "RECEIVED",
+  "INSPECTED",
+  "REFUND_PENDING",
+  "REFUNDED",
+  "CANCELLED",
+]);
+
+export const shipmentStatusExtendedEnum = z.enum([
+  "CREATED",
+  "PENDING",
+  "LABEL_CREATED",
+  "PICKUP_SCHEDULED",
+  "PICKED_UP",
+  "DISPATCHED",
+  "IN_TRANSIT",
+  "OUT_FOR_DELIVERY",
+  "DELIVERED",
+  "FAILED_ATTEMPT",
+  "RETURNED_TO_ORIGIN",
+  "LOST",
+  "DAMAGED",
+  "CANCELLED",
+]);
+
+export const createPaymentIntentSchema = z.object({
+  orderId: z.string().uuid("Valid orderId required"),
+  provider: paymentProviderEnum.default("MANUAL"),
+  amountMinorUnits: z.number().int().positive("Amount minor units must be positive integer").optional(),
+  currency: z.string().length(3, "ISO-4217 3-letter currency required").optional(),
+  idempotencyKey: z.string().min(4, "idempotencyKey must be at least 4 characters").max(128),
+  description: z.string().max(255).optional(),
+  expiresInMinutes: z.number().int().min(5).max(10080).optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+export const attemptPaymentIntentSchema = z.object({
+  method: paymentMethodExtendedEnum.default("CARD"),
+  amountMinorUnits: z.number().int().positive().optional(),
+  idempotencyKey: z.string().min(4).max(128),
+  providerPaymentId: z.string().max(128).optional(),
+  referenceNumber: z.string().max(128).optional(),
+  autoCapture: z.boolean().default(true),
+  simulateFailure: z.boolean().optional(),
+  failureCode: z.string().max(64).optional(),
+  failureReason: z.string().max(255).optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+export const capturePaymentIntentSchema = z.object({
+  amountMinorUnits: z.number().int().positive().optional(),
+  providerPaymentId: z.string().max(128).optional(),
+  idempotencyKey: z.string().min(4).max(128),
+});
+
+export const createRefundSchema = z.object({
+  orderId: z.string().uuid("Valid orderId required"),
+  paymentId: z.string().uuid().optional().nullable(),
+  paymentIntentId: z.string().uuid().optional().nullable(),
+  returnRequestId: z.string().uuid().optional().nullable(),
+  disputeId: z.string().uuid().optional().nullable(),
+  type: z
+    .enum([
+      "FULL_REFUND",
+      "PARTIAL_REFUND",
+      "CANCELLATION_REFUND",
+      "RETURN_REFUND",
+      "DISPUTE_REFUND",
+      "MANUAL_REFUND",
+    ])
+    .optional(),
+  amountMinorUnits: z.number().int().positive("Refund amountMinorUnits must be positive integer"),
+  currency: z.string().length(3).optional(),
+  reason: z.string().min(3, "Refund reason required").max(500),
+  provider: paymentProviderEnum.optional(),
+  idempotencyKey: z.string().min(4).max(128),
+  processImmediately: z.boolean().default(true),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+export const createReturnRequestSchema = z.object({
+  orderId: z.string().uuid("Valid orderId required"),
+  reason: returnReasonEnum,
+  buyerNotes: z.string().max(2000).optional().nullable(),
+  evidenceUrls: z.array(z.string().url()).optional(),
+  disputeId: z.string().uuid().optional().nullable(),
+  bypassPolicyWindow: z.boolean().optional(),
+  items: z
+    .array(
+      z.object({
+        orderItemId: z.string().uuid(),
+        quantity: z.number().int().positive(),
+        reason: z.string().max(300).optional().nullable(),
+      })
+    )
+    .optional(),
+});
+
+export const publicCreateReturnRequestSchema = z.object({
+  reason: returnReasonEnum,
+  buyerNotes: z.string().max(2000).optional().nullable(),
+  evidenceUrls: z.array(z.string().url()).optional(),
+  items: z
+    .array(
+      z.object({
+        orderItemId: z.string().uuid(),
+        quantity: z.number().int().positive(),
+        reason: z.string().max(300).optional().nullable(),
+      })
+    )
+    .optional(),
+});
+
+export const updateReturnStatusSchema = z.object({
+  status: returnStatusEnum,
+  sellerResponse: z.string().max(1000).optional().nullable(),
+  approvedAmountMinorUnits: z.number().int().nonnegative().optional().nullable(),
+  carrier: z
+    .enum([
+      "MANUAL",
+      "SHIPROCKET",
+      "DELHIVERY",
+      "BLUEDART",
+      "PORTER",
+      "DUNZO",
+      "FEDEX",
+      "LOCAL_COURIER",
+      "OTHER",
+    ])
+    .optional()
+    .nullable(),
+  trackingNumber: z.string().max(128).optional().nullable(),
+  returnLabelUrl: z.string().url().optional().nullable(),
+  inspectionNotes: z.string().max(1000).optional().nullable(),
+  inspectionPassed: z.boolean().optional().nullable(),
+  restockInventory: z.boolean().optional(),
+  issueRefund: z.boolean().optional(),
+});
+
+export const receiveReturnSchema = z.object({
+  inspectionPassed: z.boolean(),
+  inspectionNotes: z.string().max(1000).optional(),
+  restockInventory: z.boolean().optional(),
+  issueRefund: z.boolean().optional(),
+  approvedAmountMinorUnits: z.number().int().nonnegative().optional(),
+});
+
+export const createTrackingEventSchema = z.object({
+  status: shipmentStatusExtendedEnum,
+  provider: z.string().max(50).default("MANUAL"),
+  providerEventId: z.string().max(128).optional().nullable(),
+  trackingNumber: z.string().max(128).optional().nullable(),
+  description: z.string().max(500).optional().nullable(),
+  location: z.string().max(255).optional().nullable(),
+  occurredAt: z.string().datetime().optional(),
+});
+
+export const runReconciliationSchema = z.object({
+  type: z.enum(["PAYMENT", "REFUND", "SHIPMENT"]),
+  provider: z.string().max(50).optional(),
+  windowStart: z.string().datetime().optional(),
+  windowEnd: z.string().datetime().optional(),
+  providerRecords: z
+    .array(
+      z.object({
+        provider: z.string().min(1),
+        providerEntityId: z.string().min(1),
+        providerOrderId: z.string().optional(),
+        orderId: z.string().optional(),
+        amountMinorUnits: z.number().int(),
+        currency: z.string().length(3),
+        status: z.string().min(1),
+      })
+    )
+    .optional(),
+});
+
+export const resolveReconciliationEntrySchema = z.object({
+  resolutionNotes: z.string().min(3).max(1000),
+});
+
+export const upsertPaymentProviderConfigSchema = z.object({
+  provider: paymentProviderEnum,
+  environment: z.enum(["sandbox", "live"]).default("sandbox"),
+  enabled: z.boolean().default(true),
+  accountIdentifier: z.string().max(128).optional().nullable(),
+  credentials: z
+    .object({
+      keyId: z.string().optional(),
+      keySecret: z.string().optional(),
+      webhookSecret: z.string().optional(),
+      merchantId: z.string().optional(),
+    })
+    .optional()
+    .nullable(),
+  metadata: z.record(z.unknown()).optional().nullable(),
+});

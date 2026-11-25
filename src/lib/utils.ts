@@ -23,6 +23,28 @@ export function formatCurrency(
   }
 }
 
+export function formatMinorUnitsCurrency(
+  minorUnits: number,
+  currency: string = "USD"
+): string {
+  const code = (currency || "USD").toUpperCase();
+  const zeroDec = ["JPY", "KRW", "VND", "CLP", "BIF", "RWF", "UGX", "XAF", "XOF"].includes(code);
+  const threeDec = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"].includes(code);
+  const decimals = zeroDec ? 0 : threeDec ? 3 : 2;
+  const divisor = 10 ** decimals;
+  const major = (minorUnits || 0) / divisor;
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: code,
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    }).format(major);
+  } catch {
+    return `${code} ${major.toFixed(decimals)}`;
+  }
+}
+
 export function formatDate(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
   return new Intl.DateTimeFormat("en-US", {

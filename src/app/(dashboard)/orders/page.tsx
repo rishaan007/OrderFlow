@@ -346,6 +346,7 @@ export default function OrdersPage() {
                   <th className="py-3 px-4">Customer</th>
                   <th className="py-3 px-4">Channel</th>
                   <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4">Fulfillment</th>
                   <th className="py-3 px-4">Payment</th>
                   <th className="py-3 px-4">Items</th>
                   <th className="py-3 px-4 text-right">Total</th>
@@ -380,14 +381,28 @@ export default function OrdersPage() {
                     </td>
 
                     <td className="py-3.5 px-4">
+                      <Badge variant="outline" className="text-[11px]">
+                        {(ord.fulfillmentStatus || "UNFULFILLED").replace(/_/g, " ")}
+                      </Badge>
+                    </td>
+
+                    <td className="py-3.5 px-4">
                       <span
                         className={`inline-flex items-center text-xs font-semibold ${
                           ord.paymentStatus === "PAID"
                             ? "text-emerald-700"
+                            : ord.paymentStatus === "REFUNDED"
+                            ? "text-rose-700"
                             : "text-amber-700"
                         }`}
                       >
-                        {ord.paymentStatus === "PAID" ? "● Paid" : "○ Unpaid"}
+                        {ord.paymentStatus === "PAID"
+                          ? "● Paid"
+                          : ord.paymentStatus === "REFUNDED"
+                          ? "↺ Refunded"
+                          : ord.paymentStatus === "PARTIALLY_PAID"
+                          ? "◐ Partial"
+                          : "○ Unpaid"}
                       </span>
                     </td>
 
@@ -640,6 +655,13 @@ export default function OrdersPage() {
                     {st}
                   </Button>
                 ))}
+              </div>
+              <div className="pt-2">
+                <Link href="/operations">
+                  <Button size="sm" variant="outline" className="text-xs gap-1.5 w-full">
+                    Open Commerce Operations (Payments, Tracking, Returns & Refunds)
+                  </Button>
+                </Link>
               </div>
             </div>
           </div>

@@ -81,6 +81,10 @@ enum PaymentMethod {
   CASH
   BANK_TRANSFER
   CARD
+  RAZORPAY
+  STRIPE
+  WALLET
+  NET_BANKING
   OTHER
 }
 
@@ -172,6 +176,7 @@ enum EvidenceType {
   BUYER_CONFIRMATION
   SELLER_CONFIRMATION
   RETURN_REQUEST
+  RETURN_INSPECTION
   REFUND_RECORD
   DISPUTE_EVIDENCE
   COMMUNICATION_TRANSCRIPT
@@ -279,13 +284,19 @@ enum ChannelSyncStatus {
 }
 
 enum ShipmentStatus {
+  CREATED
   PENDING
+  LABEL_CREATED
+  PICKUP_SCHEDULED
+  PICKED_UP
   DISPATCHED
   IN_TRANSIT
   OUT_FOR_DELIVERY
   DELIVERED
   FAILED_ATTEMPT
   RETURNED_TO_ORIGIN
+  LOST
+  DAMAGED
   CANCELLED
 }
 
@@ -479,6 +490,7 @@ model BuyerIdentity {
   mergeRequestsReceived BuyerIdentityMergeRequest[]  @relation("MergeRequestTarget")
   trustSignals        TrustSignal[]
   riskAssessments     TransactionRiskAssessment[]
+  returnRequests      ReturnRequest[]
 
   @@index([status])
   @@index([mergedIntoId])
@@ -630,6 +642,17 @@ model Business {
   trustSignals      TrustSignal[]
   riskAssessments   TransactionRiskAssessment[]
   riskReviews       RiskReview[]
+  paymentIntents    PaymentIntent[]
+  paymentAttempts   PaymentAttempt[]
+  refunds           Refund[]
+  returnRequests    ReturnRequest[]
+  ledgerEntries     LedgerEntry[]
+  paymentProviderConfigs PaymentProviderConfig[]
+  providerWebhookEvents  ProviderWebhookEvent[]
+  trackingEvents    TrackingEvent[]
+  shippingLabels    ShippingLabel[]
+  reconciliationRuns    ReconciliationRun[]
+  reconciliationEntries ReconciliationEntry[]
 
   @@map("businesses")
 }
@@ -696,6 +719,7 @@ model Customer {
   payments        Payment[]
   notifications   Notification[]
   socialTransactions SocialTransaction[]
+  returnRequests  ReturnRequest[]
   buyerIdentity   BuyerIdentity? @relation(fields: [buyerIdentityId], references: [id], onDelete: SetNull)
 
   @@unique([businessId, buyerIdentityId])
@@ -756,6 +780,7 @@ model Order {
   orderNumber      String
   customerId       String?
   status           OrderStatus   @default(PENDING)
+  fulfillmentStatus FulfillmentStatus?
   paymentStatus    PaymentStatus @default(PENDING)
   source           OrderSource   @default(MANUAL)
   currency         String        @default("USD")
@@ -766,11 +791,13 @@ model Order {
   shipping         Decimal       @default(0) @db.Decimal(12, 2)
   totalAmount      Decimal       @db.Decimal(12, 2)
   amountPaid       Decimal       @default(0) @db.Decimal(12, 2)
+  refundedAmountMinorUnits Int   @default(0)
   stockDeducted    Boolean       @default(false)
   notes            String?
   customerNotes    String?
   requiresApproval Boolean       @default(false)
   shippingAddress  String?
+  returnPolicy     Json?
   conversationId   String?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
@@ -780,6 +807,10 @@ model Order {
   conversation     Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   items            OrderItem[]
   payments         Payment[]
+  paymentIntents   PaymentIntent[]
+  refunds          Refund[]
+  returns          ReturnRequest[]
+  ledgerEntries    LedgerEntry[]
   shipments        Shipment[]
   notifications    Notification[]
   socialTransaction SocialTransaction?
@@ -811,6 +842,7 @@ model OrderItem {
   order        Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product      Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
   variant      ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  returnItems  ReturnItem[]
 
   @@index([orderId])
   @@index([productId])
@@ -888,62 +920,78 @@ model Message {
 }
 
 model Payment {
-  id              String              @id @default(uuid())
-  businessId      String
-  orderId         String
-  customerId      String?
-  amount          Decimal             @db.Decimal(12, 2)
-  currency        String              @default("USD")
-  method          PaymentMethod       @default(UPI)
-  status          PaymentRecordStatus @default(PENDING_VERIFICATION)
-  referenceNumber String?
-  screenshotUrl   String?
-  notes           String?
-  rejectionReason String?
-  verifiedBy      String?
-  verifiedAt      DateTime?
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  id                String              @id @default(uuid())
+  businessId        String
+  orderId           String
+  customerId        String?
+  paymentIntentId   String?
+  amount            Decimal             @db.Decimal(12, 2)
+  amountMinorUnits  Int?
+  currency          String              @default("USD")
+  method            PaymentMethod       @default(UPI)
+  provider          PaymentProvider     @default(MANUAL)
+  providerPaymentId String?
+  idempotencyKey    String?
+  status            PaymentRecordStatus @default(PENDING_VERIFICATION)
+  referenceNumber   String?
+  screenshotUrl     String?
+  notes             String?
+  rejectionReason   String?
+  verifiedBy        String?
+  verifiedAt        DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
 
-  business        Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  order           Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  customer        Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  business          Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order             Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customer          Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  paymentIntent     PaymentIntent?      @relation(fields: [paymentIntentId], references: [id], onDelete: SetNull)
+  refunds           Refund[]
+  ledgerEntries     LedgerEntry[]
 
   @@index([businessId])
   @@index([businessId, createdAt])
   @@index([businessId, status])
   @@index([orderId])
   @@index([customerId])
+  @@index([paymentIntentId])
+  @@index([provider, providerPaymentId])
   @@index([status])
   @@map("payments")
 }
 
 model Shipment {
-  id               String          @id @default(uuid())
-  businessId       String
-  orderId          String
-  carrier          DeliveryPartner @default(MANUAL)
-  trackingNumber   String?
-  trackingUrl      String?
-  status           ShipmentStatus  @default(PENDING)
-  shippingAddress  String
-  city             String?
-  state            String?
-  postalCode       String?
-  deliveryCharges  Decimal         @default(0) @db.Decimal(12, 2)
-  estimatedDelivery DateTime?
-  actualDelivery   DateTime?
-  failureReason    String?
-  notes            String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  id                 String          @id @default(uuid())
+  businessId         String
+  orderId            String
+  carrier            DeliveryPartner @default(MANUAL)
+  provider           String?
+  providerShipmentId String?
+  trackingNumber     String?
+  trackingUrl        String?
+  status             ShipmentStatus  @default(PENDING)
+  shippingAddress    String
+  city               String?
+  state              String?
+  postalCode         String?
+  deliveryCharges    Decimal         @default(0) @db.Decimal(12, 2)
+  estimatedDelivery  DateTime?
+  actualDelivery     DateTime?
+  failureReason      String?
+  notes              String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
 
-  business         Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  order            Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  business           Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order              Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  trackingEvents     TrackingEvent[]
+  shippingLabel      ShippingLabel?
 
   @@index([businessId])
   @@index([orderId])
   @@index([status])
+  @@index([trackingNumber])
+  @@index([provider, providerShipmentId])
   @@map("shipments")
 }
 
@@ -1058,6 +1106,10 @@ model SocialTransaction {
   notifications  Notification[]
   riskAssessment TransactionRiskAssessment?
   trustSignals   TrustSignal[]
+  paymentIntents PaymentIntent[]
+  refunds        Refund[]
+  returns        ReturnRequest[]
+  ledgerEntries  LedgerEntry[]
 
   @@index([businessId])
   @@index([businessId, status])
@@ -1146,6 +1198,8 @@ model TransactionDispute {
   business               Business                      @relation(fields: [businessId], references: [id], onDelete: Cascade)
   trustSignals           TrustSignal[]
   evidenceRecords        TransactionEvidence[]
+  refunds                Refund[]
+  returns                ReturnRequest[]
 
   @@index([businessId])
   @@index([transactionId])
@@ -1346,4 +1400,507 @@ model SocialEvent {
   @@index([externalEventId])
   @@index([occurredAt])
   @@map("social_events")
+}
+
+// =============================================================
+// Phase 5: Commerce Infrastructure (Payments, Logistics, Reconciliation & Returns)
+// =============================================================
+
+enum FulfillmentStatus {
+  UNFULFILLED
+  ALLOCATED
+  PACKED
+  DISPATCHED
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED_ATTEMPT
+  RETURNED_TO_ORIGIN
+  CANCELLED
+}
+
+enum PaymentIntentStatus {
+  CREATED
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  PARTIALLY_CAPTURED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentAttemptStatus {
+  INITIATED
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  CANCELLED
+}
+
+enum PaymentProvider {
+  RAZORPAY
+  STRIPE
+  MANUAL
+  OTHER
+}
+
+enum RefundStatus {
+  REQUESTED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum RefundType {
+  FULL_REFUND
+  PARTIAL_REFUND
+  CANCELLATION_REFUND
+  RETURN_REFUND
+  DISPUTE_REFUND
+  MANUAL_REFUND
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  LABEL_CREATED
+  IN_TRANSIT
+  RECEIVED
+  INSPECTED
+  REFUND_PENDING
+  REFUNDED
+  CANCELLED
+}
+
+enum ReturnReason {
+  WRONG_ITEM
+  DAMAGED_ITEM
+  ITEM_NOT_AS_DESCRIBED
+  SIZE_ISSUE
+  CHANGED_MIND
+  DEFECTIVE_ITEM
+  MISSING_ITEM
+  OTHER
+}
+
+enum LedgerEntryType {
+  PAYMENT_AUTHORIZED
+  PAYMENT_RECEIVED
+  PAYMENT_CAPTURED
+  REFUND_ISSUED
+  REFUND_COMPLETED
+  ADJUSTMENT
+  REVERSAL
+  FEE
+  SHIPPING_CHARGE
+  RETURN_CHARGE
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+enum ReconciliationStatus {
+  MATCHED
+  MISSING_INTERNAL
+  MISSING_PROVIDER
+  AMOUNT_MISMATCH
+  CURRENCY_MISMATCH
+  DUPLICATE
+  UNKNOWN_PROVIDER_EVENT
+  STATE_MISMATCH
+}
+
+enum ReconciliationType {
+  PAYMENT
+  REFUND
+  SHIPMENT
+}
+
+enum ProviderHealthStatus {
+  CONNECTED
+  DEGRADED
+  AUTH_REQUIRED
+  ERROR
+  DISABLED
+}
+
+enum WebhookProcessingStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  DUPLICATE
+  IGNORED
+}
+
+model PaymentIntent {
+  id                  String              @id @default(uuid())
+  businessId          String
+  orderId             String
+  socialTransactionId String?
+  provider            PaymentProvider     @default(MANUAL)
+  providerOrderId     String?
+  status              PaymentIntentStatus @default(CREATED)
+  amountMinorUnits    Int
+  capturedMinorUnits  Int                 @default(0)
+  refundedMinorUnits  Int                 @default(0)
+  currency            String              @default("USD")
+  idempotencyKey      String
+  description         String?
+  metadata            Json?
+  expiresAt           DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  business            Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order               Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  socialTransaction   SocialTransaction?  @relation(fields: [socialTransactionId], references: [id], onDelete: SetNull)
+  attempts            PaymentAttempt[]
+  payments            Payment[]
+  refunds             Refund[]
+  ledgerEntries       LedgerEntry[]
+
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, status])
+  @@index([orderId])
+  @@index([socialTransactionId])
+  @@index([provider, providerOrderId])
+  @@map("payment_intents")
+}
+
+model PaymentAttempt {
+  id                String               @id @default(uuid())
+  paymentIntentId   String
+  businessId        String
+  attemptNumber     Int                  @default(1)
+  provider          PaymentProvider
+  providerPaymentId String?
+  providerOrderId   String?
+  amountMinorUnits  Int
+  currency          String               @default("USD")
+  status            PaymentAttemptStatus @default(INITIATED)
+  method            PaymentMethod?
+  failureCode       String?
+  failureReason     String?
+  idempotencyKey    String
+  metadata          Json?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  paymentIntent     PaymentIntent        @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
+  business          Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerPaymentId])
+  @@unique([paymentIntentId, idempotencyKey])
+  @@index([paymentIntentId])
+  @@index([businessId])
+  @@map("payment_attempts")
+}
+
+model Refund {
+  id                  String             @id @default(uuid())
+  businessId          String
+  orderId             String
+  paymentId           String?
+  paymentIntentId     String?
+  socialTransactionId String?
+  returnRequestId     String?
+  disputeId           String?
+  type                RefundType         @default(MANUAL_REFUND)
+  status              RefundStatus       @default(REQUESTED)
+  amountMinorUnits    Int
+  currency            String             @default("USD")
+  reason              String
+  provider            PaymentProvider    @default(MANUAL)
+  providerRefundId    String?
+  idempotencyKey      String
+  requestedByUserId   String?
+  processedAt         DateTime?
+  failureReason       String?
+  metadata            Json?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  business            Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order               Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  payment             Payment?           @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  paymentIntent       PaymentIntent?     @relation(fields: [paymentIntentId], references: [id], onDelete: SetNull)
+  socialTransaction   SocialTransaction? @relation(fields: [socialTransactionId], references: [id], onDelete: SetNull)
+  returnRequest       ReturnRequest?     @relation(fields: [returnRequestId], references: [id], onDelete: SetNull)
+  dispute             TransactionDispute? @relation(fields: [disputeId], references: [id], onDelete: SetNull)
+  ledgerEntries       LedgerEntry[]
+
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, status])
+  @@index([orderId])
+  @@index([paymentIntentId])
+  @@index([returnRequestId])
+  @@index([provider, providerRefundId])
+  @@map("refunds")
+}
+
+model ReturnRequest {
+  id                        String              @id @default(uuid())
+  businessId                String
+  orderId                   String
+  socialTransactionId       String?
+  customerId                String?
+  buyerIdentityId           String?
+  disputeId                 String?
+  status                    ReturnStatus        @default(REQUESTED)
+  reason                    ReturnReason
+  buyerNotes                String?
+  sellerResponse            String?
+  inspectionNotes           String?
+  inspectionPassed          Boolean?
+  policySnapshot            Json
+  eligibilityResult         Json
+  requestedAmountMinorUnits Int                 @default(0)
+  approvedAmountMinorUnits  Int?
+  currency                  String              @default("USD")
+  trackingNumber            String?
+  carrier                   DeliveryPartner?
+  returnLabelUrl            String?
+  evidenceUrls              String[]            @default([])
+  approvedAt                DateTime?
+  rejectedAt                DateTime?
+  receivedAt                DateTime?
+  inspectedAt               DateTime?
+  refundedAt                DateTime?
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
+
+  business                  Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order                     Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  socialTransaction         SocialTransaction?  @relation(fields: [socialTransactionId], references: [id], onDelete: SetNull)
+  customer                  Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  buyerIdentity             BuyerIdentity?      @relation(fields: [buyerIdentityId], references: [id], onDelete: SetNull)
+  dispute                   TransactionDispute? @relation(fields: [disputeId], references: [id], onDelete: SetNull)
+  items                     ReturnItem[]
+  refunds                   Refund[]
+
+  @@index([businessId, status])
+  @@index([orderId])
+  @@index([socialTransactionId])
+  @@index([buyerIdentityId])
+  @@map("return_requests")
+}
+
+model ReturnItem {
+  id                  String        @id @default(uuid())
+  returnRequestId     String
+  orderItemId         String
+  quantity            Int
+  unitPriceMinorUnits Int
+  reason              String?
+  conditionNotes      String?
+
+  returnRequest       ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  orderItem           OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([returnRequestId])
+  @@index([orderItemId])
+  @@map("return_items")
+}
+
+// Append-only immutable financial ledger.
+// Updates and deletions of historical entries are strictly disallowed in domain services;
+// corrections must always be recorded as compensating entries referencing reversesEntryId.
+model LedgerEntry {
+  id                  String             @id @default(uuid())
+  businessId          String
+  orderId             String
+  socialTransactionId String?
+  paymentId           String?
+  paymentIntentId     String?
+  refundId            String?
+  transactionGroupId  String
+  sequenceNumber      Int                @default(1)
+  account             String             @default("ORDER_RECEIVABLE")
+  entryType           LedgerEntryType
+  direction           LedgerDirection
+  amountMinorUnits    Int
+  currency            String             @default("USD")
+  referenceType       String
+  referenceId         String
+  reversesEntryId     String?
+  provider            PaymentProvider?
+  providerEventId     String?
+  idempotencyKey      String?
+  description         String
+  metadata            Json?
+  createdAt           DateTime           @default(now())
+
+  business            Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order               Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  socialTransaction   SocialTransaction? @relation(fields: [socialTransactionId], references: [id], onDelete: SetNull)
+  payment             Payment?           @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  paymentIntent       PaymentIntent?     @relation(fields: [paymentIntentId], references: [id], onDelete: SetNull)
+  refund              Refund?            @relation(fields: [refundId], references: [id], onDelete: SetNull)
+
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, createdAt])
+  @@index([orderId, createdAt])
+  @@index([transactionGroupId])
+  @@index([paymentIntentId])
+  @@index([refundId])
+  @@map("ledger_entries")
+}
+
+model PaymentProviderConfig {
+  id                   String               @id @default(uuid())
+  businessId           String
+  provider             PaymentProvider
+  enabled              Boolean              @default(true)
+  environment          String               @default("sandbox")
+  accountIdentifier    String?
+  encryptedCredentials String?
+  status               ProviderHealthStatus @default(CONNECTED)
+  lastVerifiedAt       DateTime?
+  lastError            String?
+  errorCount           Int                  @default(0)
+  metadata             Json?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  business             Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, provider, environment])
+  @@index([businessId])
+  @@index([provider, accountIdentifier])
+  @@map("payment_provider_configs")
+}
+
+model ProviderWebhookEvent {
+  id                   String                  @id @default(uuid())
+  domain               String                  @default("PAYMENT")
+  provider             String
+  providerEventId      String
+  eventType            String
+  businessId           String?
+  signatureVerified    Boolean                 @default(false)
+  occurredAt           DateTime?
+  receivedAt           DateTime                @default(now())
+  processedAt          DateTime?
+  processingStatus     WebhookProcessingStatus @default(RECEIVED)
+  error                String?
+  normalizedEntityType String?
+  normalizedEntityId   String?
+  payload              Json
+  metadata             Json?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  business             Business?               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerEventId])
+  @@index([businessId, receivedAt])
+  @@index([domain, processingStatus])
+  @@map("provider_webhook_events")
+}
+
+model TrackingEvent {
+  id              String         @id @default(uuid())
+  shipmentId      String
+  businessId      String
+  provider        String
+  providerEventId String?
+  trackingNumber  String?
+  status          ShipmentStatus
+  rawStatus       String?
+  description     String?
+  location        String?
+  occurredAt      DateTime
+  receivedAt      DateTime       @default(now())
+  rawEventData    Json?
+  createdAt       DateTime       @default(now())
+
+  shipment        Shipment       @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  business        Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerEventId])
+  @@index([shipmentId, occurredAt])
+  @@index([businessId])
+  @@map("tracking_events")
+}
+
+model ShippingLabel {
+  id             String   @id @default(uuid())
+  shipmentId     String   @unique
+  businessId     String
+  provider       String
+  trackingNumber String
+  labelUrl       String?
+  labelReference String?
+  format         String   @default("PDF")
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  shipment       Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+  @@index([trackingNumber])
+  @@map("shipping_labels")
+}
+
+model ReconciliationRun {
+  id              String               @id @default(uuid())
+  businessId      String
+  type            ReconciliationType
+  provider        String?
+  windowStart     DateTime
+  windowEnd       DateTime
+  totalRecords    Int                  @default(0)
+  matchedCount    Int                  @default(0)
+  mismatchCount   Int                  @default(0)
+  unresolvedCount Int                  @default(0)
+  status          String               @default("COMPLETED")
+  summary         Json?
+  startedAt       DateTime             @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime             @default(now())
+
+  business        Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  entries         ReconciliationEntry[]
+
+  @@index([businessId, type, createdAt])
+  @@map("reconciliation_runs")
+}
+
+model ReconciliationEntry {
+  id                       String               @id @default(uuid())
+  runId                    String
+  businessId               String
+  status                   ReconciliationStatus
+  internalEntityType       String?
+  internalEntityId         String?
+  providerEntityId         String?
+  expectedAmountMinorUnits Int?
+  actualAmountMinorUnits   Int?
+  expectedCurrency         String?
+  actualCurrency           String?
+  expectedState            String?
+  actualState              String?
+  resolved                 Boolean              @default(false)
+  resolvedAt               DateTime?
+  resolutionNotes          String?
+  notes                    String?
+  metadata                 Json?
+  createdAt                DateTime             @default(now())
+
+  run                      ReconciliationRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  business                 Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([runId, status])
+  @@index([businessId, status])
+  @@map("reconciliation_entries")
 }

@@ -11,9 +11,15 @@ import {
   TransactionStatus,
   OrderStatus,
   PaymentStatus,
+  PaymentProvider,
+  RefundType,
+  RefundStatus,
+  LedgerEntryType,
   Prisma,
 } from "@prisma/client";
 import { logger } from "./logger";
+import { toMinorUnits, minorUnitsToMajorString } from "./money";
+import { appendBalancedLedgerPair } from "./ledger";
 
 export interface CreateDisputeCaseInput {
   transactionId: string;
@@ -452,15 +458,89 @@ export async function resolveDisputeCase(
       },
     });
 
-    // 2. If approved/refunded, transition order payment status if attached
+    // 2. If approved/refunded, transition order payment status & record canonical Refund/Ledger if captured > 0
     if ((finalStatus === DisputeStatus.APPROVED || finalStatus === DisputeStatus.REFUNDED) && dispute.orderId) {
-      await tx.order.update({
-        where: { id: dispute.orderId },
-        data: {
-          paymentStatus: PaymentStatus.REFUNDED,
-          status: OrderStatus.CANCELLED,
+      const orderRec = dispute.order;
+      const paidMinor = orderRec ? toMinorUnits(orderRec.amountPaid, orderRec.currency) : 0;
+      const requestedRefundVal =
+        input.refundAmount ?? (dispute.refundAmount ? Number(dispute.refundAmount) : 0);
+      const requestedMinor =
+        orderRec && requestedRefundVal > 0
+          ? toMinorUnits(requestedRefundVal, orderRec.currency)
+          : paidMinor;
+
+      const existingRefunds = await tx.refund.aggregate({
+        where: {
+          businessId,
+          orderId: dispute.orderId,
+          status: { in: [RefundStatus.REQUESTED, RefundStatus.PROCESSING, RefundStatus.COMPLETED] },
         },
+        _sum: { amountMinorUnits: true },
       });
+      const alreadyRefundedMinor = existingRefunds._sum.amountMinorUnits || 0;
+      const refundableMinor = Math.max(0, paidMinor - alreadyRefundedMinor);
+      const actualRefundMinor = Math.min(requestedMinor, refundableMinor);
+
+      if (orderRec && actualRefundMinor > 0) {
+        const refund = await tx.refund.create({
+          data: {
+            businessId,
+            orderId: dispute.orderId,
+            socialTransactionId: dispute.transactionId,
+            disputeId: dispute.id,
+            type: RefundType.DISPUTE_REFUND,
+            status: RefundStatus.COMPLETED,
+            amountMinorUnits: actualRefundMinor,
+            currency: orderRec.currency,
+            reason: `Dispute resolution: ${input.resolutionReason}`,
+            provider: PaymentProvider.MANUAL,
+            providerRefundId: `disp_ref_${dispute.id.slice(0, 12)}`,
+            idempotencyKey: `dispute-refund:${dispute.id}`,
+            requestedByUserId: actorUserId,
+            processedAt: new Date(),
+          },
+        });
+
+        await appendBalancedLedgerPair(
+          {
+            businessId,
+            orderId: dispute.orderId,
+            socialTransactionId: dispute.transactionId,
+            refundId: refund.id,
+            entryType: LedgerEntryType.REFUND_COMPLETED,
+            debitAccount: "ORDER_RECEIVABLE",
+            creditAccount: "PROVIDER_CLEARING",
+            amountMinorUnits: actualRefundMinor,
+            currency: orderRec.currency,
+            referenceType: "DISPUTE_RESOLUTION",
+            referenceId: dispute.id,
+            provider: PaymentProvider.MANUAL,
+            idempotencyKeyPrefix: `dispute-refund:${dispute.id}`,
+            description: `Dispute refund (${minorUnitsToMajorString(actualRefundMinor, orderRec.currency)} ${orderRec.currency}): ${input.resolutionReason}`,
+          },
+          tx
+        );
+
+        await tx.order.update({
+          where: { id: dispute.orderId },
+          data: {
+            paymentStatus:
+              alreadyRefundedMinor + actualRefundMinor >= paidMinor
+                ? PaymentStatus.REFUNDED
+                : orderRec.paymentStatus,
+            refundedAmountMinorUnits: alreadyRefundedMinor + actualRefundMinor,
+            status: OrderStatus.CANCELLED,
+          },
+        });
+      } else {
+        await tx.order.update({
+          where: { id: dispute.orderId },
+          data: {
+            paymentStatus: PaymentStatus.REFUNDED,
+            status: OrderStatus.CANCELLED,
+          },
+        });
+      }
 
       // Record refund evidence
       await tx.transactionEvidence.create({
