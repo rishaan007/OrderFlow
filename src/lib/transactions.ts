@@ -198,9 +198,9 @@ export async function addEvidence(
     data: {
       transactionId,
       evidenceType: data.evidenceType as EvidenceType,
-      verificationState: data.verificationState as EvidenceVerificationState,
-      source: data.source,
-      actor: data.actor as TimelineActor,
+      verificationState: (data.verificationState as EvidenceVerificationState) || EvidenceVerificationState.OBSERVED,
+      source: data.source || "MANUAL_UPLOAD",
+      actor: (data.actor as TimelineActor) || TimelineActor.SYSTEM,
       mediaUrl: data.mediaUrl,
       notes: data.notes,
       metadata: data.metadata ? (data.metadata as Prisma.InputJsonValue) : Prisma.JsonNull,

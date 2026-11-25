@@ -404,7 +404,7 @@ export function getTenantDb(businessId: string) {
           });
         }
 
-        return tx.product.findUnique({
+        return tx.product.findUniqueOrThrow({
           where: { id: product.id },
           include: { variants: true },
         });
@@ -2031,7 +2031,7 @@ export function getTenantDb(businessId: string) {
         customerPhone?: string | null;
         customerEmail?: string | null;
         instagramHandle?: string | null;
-        shippingAddress: string;
+        shippingAddress?: string | null;
         city?: string | null;
         items: {
           productId?: string | null;
