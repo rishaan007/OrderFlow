@@ -124,6 +124,7 @@ export async function getSellerTrustProfile(
   const orders = await prisma.order.findMany({
     where: {
       businessId,
+      isSandbox: false,
       createdAt: { gte: windowStart, lte: now },
     },
     include: {
@@ -139,6 +140,7 @@ export async function getSellerTrustProfile(
   const transactions = await prisma.socialTransaction.findMany({
     where: {
       businessId,
+      isSandbox: false,
       createdAt: { gte: windowStart, lte: now },
     },
     select: { id: true, status: true },
@@ -335,7 +337,7 @@ export async function getBuyerTrustProfile(
     include: {
       links: true,
       transactions: {
-        where: { createdAt: { gte: windowStart, lte: now } },
+        where: { isSandbox: false, createdAt: { gte: windowStart, lte: now } },
         include: {
           disputes: {
             select: { id: true, status: true },

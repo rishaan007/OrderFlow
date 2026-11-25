@@ -109,10 +109,11 @@ export async function getBusinessRevenueAnalytics(
   const startDate = filter.startDate ?? new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
   const endDate = filter.endDate ?? now;
 
-  // Query actual orders within period
+  // Query actual orders within period (excluding sandbox transactions)
   const orders = await prisma.order.findMany({
     where: {
       businessId,
+      isSandbox: false,
       createdAt: {
         gte: startDate,
         lte: endDate,
@@ -228,6 +229,7 @@ export async function getBusinessProductPerformance(businessId: string): Promise
       where: {
         order: {
           businessId,
+          isSandbox: false,
           status: { not: OrderStatus.CANCELLED },
         },
       },
@@ -398,6 +400,7 @@ export async function getBusinessPaymentReport(businessId: string): Promise<Paym
     prisma.order.findMany({
       where: {
         businessId,
+        isSandbox: false,
         status: { not: OrderStatus.CANCELLED },
       },
       select: {

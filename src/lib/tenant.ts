@@ -389,6 +389,8 @@ export function getTenantDb(businessId: string) {
       title: string;
       sku?: string | null;
       category?: string | null;
+      brand?: string | null;
+      tags?: string[];
       description?: string | null;
       price: number;
       costPrice?: number | null;
@@ -396,6 +398,7 @@ export function getTenantDb(businessId: string) {
       lowStockThreshold?: number;
       trackInventory?: boolean;
       status?: ProductStatus;
+      marketplaceDiscoverable?: boolean;
       variants?: {
         title: string;
         sku?: string | null;
@@ -404,13 +407,15 @@ export function getTenantDb(businessId: string) {
         stockQuantity?: number;
       }[];
     }) => {
-      return prisma.$transaction(async (tx) => {
+      const created = await prisma.$transaction(async (tx) => {
         const product = await tx.product.create({
           data: {
             businessId,
             title: data.title,
             sku: data.sku,
             category: data.category,
+            brand: data.brand,
+            tags: data.tags ?? [],
             description: data.description,
             price: data.price,
             costPrice: data.costPrice,
@@ -418,6 +423,7 @@ export function getTenantDb(businessId: string) {
             lowStockThreshold: data.lowStockThreshold ?? 5,
             trackInventory: data.trackInventory ?? true,
             status: data.status ?? ProductStatus.ACTIVE,
+            marketplaceDiscoverable: data.marketplaceDiscoverable ?? false,
           },
         });
 
@@ -439,6 +445,10 @@ export function getTenantDb(businessId: string) {
           include: { variants: true },
         });
       });
+
+      const { syncProductDiscoveryIndex } = await import("./marketplace");
+      await syncProductDiscoveryIndex(created.id).catch(() => {});
+      return created;
     },
 
     updateProduct: async (
@@ -447,6 +457,8 @@ export function getTenantDb(businessId: string) {
         title?: string;
         sku?: string | null;
         category?: string | null;
+        brand?: string | null;
+        tags?: string[];
         description?: string | null;
         price?: number;
         costPrice?: number | null;
@@ -454,6 +466,7 @@ export function getTenantDb(businessId: string) {
         lowStockThreshold?: number;
         trackInventory?: boolean;
         status?: ProductStatus;
+        marketplaceDiscoverable?: boolean;
         variants?: {
           id?: string;
           title: string;
@@ -472,13 +485,15 @@ export function getTenantDb(businessId: string) {
         throw new TenantAccessError("Product not found in this business");
       }
 
-      return prisma.$transaction(async (tx) => {
+      const updated = await prisma.$transaction(async (tx) => {
         await tx.product.update({
           where: { id },
           data: {
             title: data.title,
             sku: data.sku,
             category: data.category,
+            brand: data.brand,
+            tags: data.tags,
             description: data.description,
             price: data.price,
             costPrice: data.costPrice,
@@ -486,6 +501,7 @@ export function getTenantDb(businessId: string) {
             lowStockThreshold: data.lowStockThreshold,
             trackInventory: data.trackInventory,
             status: data.status,
+            marketplaceDiscoverable: data.marketplaceDiscoverable,
           },
         });
 
@@ -536,6 +552,10 @@ export function getTenantDb(businessId: string) {
           include: { variants: true },
         });
       });
+
+      const { syncProductDiscoveryIndex } = await import("./marketplace");
+      await syncProductDiscoveryIndex(id).catch(() => {});
+      return updated;
     },
 
     deleteProduct: async (id: string) => {
@@ -753,6 +773,7 @@ export function getTenantDb(businessId: string) {
       paymentStatus?: PaymentStatus;
       source?: OrderSource;
       customerId?: string;
+      isSandbox?: boolean;
       sortBy?: "createdAt" | "totalAmount" | "orderNumber";
       sortOrder?: "asc" | "desc";
       page?: number;
@@ -764,6 +785,7 @@ export function getTenantDb(businessId: string) {
 
       const where: Prisma.OrderWhereInput = {
         businessId,
+        isSandbox: params?.isSandbox ?? false,
         ...(params?.status ? { status: params.status } : {}),
         ...(params?.paymentStatus ? { paymentStatus: params.paymentStatus } : {}),
         ...(params?.source ? { source: params.source } : {}),
@@ -880,9 +902,13 @@ export function getTenantDb(businessId: string) {
       };
     },
 
-    getOrderById: async (id: string) => {
+    getOrderById: async (id: string, options?: { isSandbox?: boolean }) => {
       const o = await prisma.order.findFirst({
-        where: { id, businessId },
+        where: {
+          id,
+          businessId,
+          ...(options?.isSandbox !== undefined ? { isSandbox: options.isSandbox } : {}),
+        },
         include: {
           customer: true,
           items: true,
@@ -1046,6 +1072,11 @@ export function getTenantDb(businessId: string) {
       discountType?: string;
       shipping?: number;
       tax?: number;
+      feesMinorUnits?: number;
+      totalSnapshot?: Prisma.InputJsonValue | null;
+      taxBreakdown?: Prisma.InputJsonValue | null;
+      shippingAddressStructured?: Prisma.InputJsonValue | null;
+      isSandbox?: boolean;
       shippingAddress?: string | null;
       conversationId?: string | null;
       socialTransactionId?: string | null;
@@ -1062,8 +1093,10 @@ export function getTenantDb(businessId: string) {
         unitPrice: number;
       }[];
     }) => {
-      // Enforce subscription plan monthly order limit
-      await assertCanCreateOrder(businessId);
+      // Enforce subscription plan monthly order limit (sandbox requests bypass production quota)
+      if (!data.isSandbox) {
+        await assertCanCreateOrder(businessId);
+      }
 
       return prisma.$transaction(async (tx) => {
         // 1. Fetch business and profile for order prefix and currency
@@ -1078,7 +1111,7 @@ export function getTenantDb(businessId: string) {
 
         // Generate unique order number
         const orderCount = await tx.order.count({ where: { businessId } });
-        const orderNumber = `${prefix}${1001 + orderCount}`;
+        const orderNumber = `${prefix}${data.isSandbox ? "SBX-" : ""}${1001 + orderCount}`;
 
         // 2. Resolve Customer (Existing or On-The-Fly Creation)
         let resolvedCustomerId = data.customerId ?? null;
@@ -1121,10 +1154,11 @@ export function getTenantDb(businessId: string) {
         // 5. Automatic Inventory Deduction if order is created in confirmed/processing status
         const initialStatus = data.status ?? OrderStatus.PENDING;
         const shouldDeductStock =
-          initialStatus === OrderStatus.CONFIRMED ||
-          initialStatus === OrderStatus.PROCESSING ||
-          initialStatus === OrderStatus.SHIPPED ||
-          initialStatus === OrderStatus.DELIVERED;
+          !data.isSandbox &&
+          (initialStatus === OrderStatus.CONFIRMED ||
+            initialStatus === OrderStatus.PROCESSING ||
+            initialStatus === OrderStatus.SHIPPED ||
+            initialStatus === OrderStatus.DELIVERED);
 
         if (shouldDeductStock) {
           for (const item of calculatedItems) {
@@ -1183,6 +1217,11 @@ export function getTenantDb(businessId: string) {
             discountType: data.discountType ?? "FIXED",
             shipping: shippingAmount,
             tax: taxAmount,
+            feesMinorUnits: data.feesMinorUnits ?? 0,
+            totalSnapshot: data.totalSnapshot ?? Prisma.JsonNull,
+            taxBreakdown: data.taxBreakdown ?? Prisma.JsonNull,
+            shippingAddressStructured: data.shippingAddressStructured ?? Prisma.JsonNull,
+            isSandbox: Boolean(data.isSandbox),
             totalAmount,
             stockDeducted: shouldDeductStock,
             notes: data.notes,
@@ -1219,8 +1258,8 @@ export function getTenantDb(businessId: string) {
           },
         });
 
-        // 7. Update Customer stats
-        if (resolvedCustomerId) {
+        // 7. Update Customer stats (for live orders only)
+        if (resolvedCustomerId && !data.isSandbox) {
           const isPaid = order.paymentStatus === PaymentStatus.PAID;
           await tx.customer.update({
             where: { id: resolvedCustomerId },
@@ -1232,21 +1271,31 @@ export function getTenantDb(businessId: string) {
         }
 
         // 8. Canonical SocialTransaction integration
+        let linkedSocialTx = order.socialTransaction;
         try {
           if (data.socialTransactionId) {
-            await tx.socialTransaction.update({
+            const updatedTx = await tx.socialTransaction.update({
               where: { id: data.socialTransactionId },
               data: {
                 orderId: order.id,
+                isSandbox: Boolean(data.isSandbox),
                 status:
                   order.paymentStatus === PaymentStatus.PAID
                     ? TransactionStatus.PROCESSING
                     : TransactionStatus.ORDER_CREATED,
               },
+              select: {
+                id: true,
+                publicTrackingToken: true,
+                platform: true,
+                surface: true,
+                status: true,
+              },
             });
+            linkedSocialTx = updatedTx;
           } else {
             const socialContext = mapOrderSourceToSocialContext(order.source);
-            await tx.socialTransaction.create({
+            const createdTx = await tx.socialTransaction.create({
               data: {
                 businessId,
                 orderId: order.id,
@@ -1254,6 +1303,7 @@ export function getTenantDb(businessId: string) {
                 conversationId: data.conversationId ?? null,
                 platform: socialContext.platform,
                 surface: socialContext.surface,
+                isSandbox: Boolean(data.isSandbox),
                 status:
                   order.paymentStatus === PaymentStatus.PAID
                     ? TransactionStatus.PROCESSING
@@ -1281,13 +1331,24 @@ export function getTenantDb(businessId: string) {
                   ],
                 },
               },
+              select: {
+                id: true,
+                publicTrackingToken: true,
+                platform: true,
+                surface: true,
+                status: true,
+              },
             });
+            linkedSocialTx = createdTx;
           }
         } catch {
           // Non-blocking fallback for existing historical transactions
         }
 
-        return order;
+        return {
+          ...order,
+          socialTransaction: linkedSocialTx,
+        };
       });
     },
 
@@ -2208,6 +2269,7 @@ export function getTenantDb(businessId: string) {
         if (params?.customerId) where.customerId = params.customerId;
         if (params?.status) where.status = params.status;
         if (params?.method) where.method = params.method;
+        if (params?.isSandbox !== undefined) where.order = { isSandbox: params.isSandbox };
         if (params?.search && typeof params.search === 'string' && params.search.trim()) {
           const query = params.search.trim();
           where.OR = [
@@ -2656,6 +2718,7 @@ export function getTenantDb(businessId: string) {
       carrier?: DeliveryPartner;
       status?: ShipmentStatus;
       orderId?: string;
+      isSandbox?: boolean;
       search?: string;
       page?: number;
       limit?: number;
@@ -2666,6 +2729,7 @@ export function getTenantDb(businessId: string) {
 
       const where: Prisma.ShipmentWhereInput = {
         businessId,
+        ...(params?.isSandbox !== undefined ? { isSandbox: params.isSandbox } : {}),
       };
 
       if (params?.carrier) where.carrier = params.carrier;

@@ -307,6 +307,7 @@ export async function getBuyerPurchases(
 
   const transactions = await prisma.socialTransaction.findMany({
     where: {
+      isSandbox: false,
       OR: [
         { buyerUserId: userId },
         ...(identity ? [{ buyerIdentityId: identity.id }] : []),

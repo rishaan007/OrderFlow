@@ -43,6 +43,10 @@ export function mapOrderSourceToSocialContext(source: OrderSource): {
       return { platform: SocialPlatform.FACEBOOK, surface: SocialSurface.MESSENGER };
     case OrderSource.X:
       return { platform: SocialPlatform.X, surface: SocialSurface.X_DM };
+    case OrderSource.MARKETPLACE:
+      return { platform: SocialPlatform.MARKETPLACE, surface: SocialSurface.MARKETPLACE };
+    case OrderSource.API:
+      return { platform: SocialPlatform.API, surface: SocialSurface.EXTERNAL_LINK };
     case OrderSource.ONLINE:
       return { platform: SocialPlatform.OTHER, surface: SocialSurface.EXTERNAL_LINK };
     case OrderSource.MANUAL:

@@ -43,6 +43,7 @@ export function middleware(request: NextRequest) {
     pathname.startsWith("/orders") ||
     pathname.startsWith("/operations") ||
     pathname.startsWith("/trust") ||
+    pathname.startsWith("/developers") ||
     pathname.startsWith("/customers") ||
     pathname.startsWith("/products") ||
     pathname.startsWith("/inbox") ||

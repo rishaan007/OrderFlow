@@ -6,6 +6,8 @@ import {
   BuyerVerificationPurpose,
   BuyerIdentityEventType,
   IdentityConfidence,
+  PrivacyVisibility,
+  ReviewDisplayMode,
   TimelineActor,
   TimelineVisibility,
 } from "@prisma/client";
@@ -1016,6 +1018,9 @@ export interface UpdateBuyerProfileInput {
   avatarUrl?: string | null;
   locale?: string | null;
   timezone?: string | null;
+  countryCode?: string | null;
+  networkVisibility?: PrivacyVisibility;
+  reviewDisplayMode?: ReviewDisplayMode;
   privacySettings?: Record<string, unknown> | null;
   notificationPreferences?: Record<string, unknown> | null;
 }
@@ -1029,7 +1034,7 @@ export async function getBuyerProfile(userId: string) {
       orderBy: { createdAt: "asc" },
     }),
     prisma.notification.count({ where: { userId, readAt: null } }),
-    prisma.socialTransaction.count({ where: { buyerIdentityId: identity.id } }),
+    prisma.socialTransaction.count({ where: { buyerIdentityId: identity.id, isSandbox: false } }),
   ]);
 
   return {
@@ -1040,11 +1045,14 @@ export async function getBuyerProfile(userId: string) {
     avatarUrl: identity.avatarUrl,
     locale: identity.locale,
     timezone: identity.timezone,
+    countryCode: identity.countryCode,
     email: identity.email,
     phone: identity.phone,
     emailVerified: Boolean(identity.emailVerifiedAt),
     phoneVerified: Boolean(identity.phoneVerifiedAt),
     verificationLevel: identity.verificationLevel,
+    networkVisibility: identity.networkVisibility,
+    reviewDisplayMode: identity.reviewDisplayMode,
     privacySettings: identity.privacySettings,
     notificationPreferences: identity.notificationPreferences,
     createdAt: identity.createdAt.toISOString(),
@@ -1080,6 +1088,15 @@ export async function updateBuyerProfile(userId: string, input: UpdateBuyerProfi
   if (input.timezone !== undefined) {
     data.timezone = input.timezone || null;
   }
+  if (input.countryCode !== undefined) {
+    data.countryCode = input.countryCode ? input.countryCode.trim().toUpperCase().slice(0, 2) : null;
+  }
+  if (input.networkVisibility !== undefined) {
+    data.networkVisibility = input.networkVisibility;
+  }
+  if (input.reviewDisplayMode !== undefined) {
+    data.reviewDisplayMode = input.reviewDisplayMode;
+  }
   if (input.privacySettings !== undefined) {
     data.privacySettings = input.privacySettings as Prisma.InputJsonValue;
   }
@@ -1092,11 +1109,23 @@ export async function updateBuyerProfile(userId: string, input: UpdateBuyerProfi
     data,
   });
 
-  await recordIdentityEvent(prisma, identity.id, BuyerIdentityEventType.IDENTITY_PROFILE_UPDATED, {
-    actorType: "BUYER",
-    actorUserId: userId,
-    metadata: { fields: Object.keys(data) },
-  });
+  const privacyChanged =
+    input.networkVisibility !== undefined ||
+    input.reviewDisplayMode !== undefined ||
+    input.privacySettings !== undefined;
+
+  await recordIdentityEvent(
+    prisma,
+    identity.id,
+    privacyChanged
+      ? BuyerIdentityEventType.PRIVACY_UPDATED
+      : BuyerIdentityEventType.IDENTITY_PROFILE_UPDATED,
+    {
+      actorType: "BUYER",
+      actorUserId: userId,
+      metadata: { fields: Object.keys(data) },
+    }
+  );
 
   return updated;
 }

@@ -38,6 +38,8 @@ enum OrderSource {
   FACEBOOK
   X
   ONLINE
+  MARKETPLACE
+  API
 }
 
 enum ConversationChannel {
@@ -114,6 +116,8 @@ enum SocialPlatform {
   X
   TIKTOK
   TELEGRAM
+  MARKETPLACE
+  API
   OTHER
   MANUAL
 }
@@ -308,6 +312,13 @@ enum AutomationJobType {
   DELIVERY_DELIVERED
   LOW_STOCK_ALERT
   INVENTORY_RESTORE
+  WEBHOOK_RETRY
+  NOTIFICATION_DELIVERY
+  RECONCILIATION
+  ANALYTICS_AGGREGATION
+  SEARCH_INDEXING
+  DATA_EXPORT
+  INTEGRATION_SYNC
 }
 
 enum JobStatus {
@@ -388,8 +399,22 @@ enum EventProcessingStatus {
 enum BuyerIdentityStatus {
   ACTIVE
   SUSPENDED
+  DEACTIVATED
   MERGED
   DELETED
+}
+
+enum PrivacyVisibility {
+  PRIVATE
+  SELLER_VISIBLE
+  NETWORK_VISIBLE
+  PUBLIC
+}
+
+enum ReviewDisplayMode {
+  VERIFIED_BUYER
+  NAME_INITIAL
+  ANONYMOUS
 }
 
 enum BuyerIdentityProvider {
@@ -430,6 +455,9 @@ enum BuyerIdentityEventType {
   CLAIM_CHALLENGE_ISSUED
   CLAIM_REJECTED
   IDENTITY_LOOKUP_FAILED
+  IDENTITY_DEACTIVATED
+  IDENTITY_EXPORTED
+  PRIVACY_UPDATED
 }
 
 model User {
@@ -440,6 +468,8 @@ model User {
   supabaseAuthId  String?          @unique
   avatarUrl       String?
   systemRole      String           @default("USER")
+  locale          String?          @default("en")
+  timezone        String?          @default("UTC")
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
@@ -450,6 +480,7 @@ model User {
   notifications   Notification[]   @relation("UserNotifications")
   buyerIdentity   BuyerIdentity?   @relation("BuyerIdentityAccount")
   assignedRiskReviews RiskReview[]
+  developerProfile Developer?
 
   @@map("users")
 }
@@ -465,14 +496,19 @@ model BuyerIdentity {
   avatarUrl             String?
   locale                String?
   timezone              String?
+  countryCode           String?
   email                 String?
   phone                 String?
   emailVerifiedAt       DateTime?
   phoneVerifiedAt       DateTime?
   verificationLevel     IdentityConfidence  @default(UNVERIFIED)
+  networkVisibility     PrivacyVisibility   @default(PRIVATE)
+  reviewDisplayMode     ReviewDisplayMode   @default(VERIFIED_BUYER)
   privacySettings       Json?
   notificationPreferences Json?
   lastSeenAt            DateTime?
+  deactivatedAt         DateTime?
+  deletedAt             DateTime?
   mergedIntoId          String?
   createdAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
@@ -491,8 +527,11 @@ model BuyerIdentity {
   trustSignals        TrustSignal[]
   riskAssessments     TransactionRiskAssessment[]
   returnRequests      ReturnRequest[]
+  reviews             Review[]
+  dataExports         DataExport[]
 
   @@index([status])
+  @@index([networkVisibility])
   @@index([mergedIntoId])
   @@index([email])
   @@index([phone])
@@ -605,22 +644,27 @@ model BuyerIdentityAuditEvent {
 }
 
 model Business {
-  id                 String             @id @default(uuid())
+  id                 String                 @id @default(uuid())
   name               String
-  slug               String             @unique
-  currency           String             @default("USD")
-  timezone           String             @default("UTC")
+  slug               String                 @unique
+  currency           String                 @default("USD")
+  timezone           String                 @default("UTC")
+  countryCode        String                 @default("US")
+  locale             String                 @default("en")
+  accountStatus      AccountLifecycleStatus @default(ACTIVE)
+  isSandboxBusiness  Boolean                @default(false)
+  deletedAt          DateTime?
   logoUrl            String?
   email              String?
   phone              String?
   address            String?
-  plan               SubscriptionPlan   @default(FREE)
-  subscriptionStatus SubscriptionStatus @default(ACTIVE)
+  plan               SubscriptionPlan       @default(FREE)
+  subscriptionStatus SubscriptionStatus     @default(ACTIVE)
   planExpiresAt      DateTime?
-  monthlyOrderLimit  Int                @default(50)
-  maxMembersLimit    Int                @default(2)
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
+  monthlyOrderLimit  Int                    @default(50)
+  maxMembersLimit    Int                    @default(2)
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
 
   members        BusinessMember[]
   invitations    TeamInvitation[]
@@ -653,7 +697,18 @@ model Business {
   shippingLabels    ShippingLabel[]
   reconciliationRuns    ReconciliationRun[]
   reconciliationEntries ReconciliationEntry[]
+  sellerProfile         SellerProfile?
+  sellerVerifications   SellerVerification[]
+  marketplaceListings   MarketplaceListing[]
+  reviews               Review[]
+  developerApps         DeveloperApplication[]
+  integrationConnections IntegrationConnection[]
+  taxRules              TaxRule[]
+  dataExports           DataExport[]
+  backgroundJobs        BackgroundJob[]
 
+  @@index([accountStatus])
+  @@index([countryCode])
   @@map("businesses")
 }
 
@@ -732,27 +787,35 @@ model Customer {
 }
 
 model Product {
-  id                String           @id @default(uuid())
-  businessId        String
-  title             String
-  sku               String?
-  category          String?
-  description       String?
-  price             Decimal          @db.Decimal(12, 2)
-  costPrice         Decimal?         @db.Decimal(12, 2)
-  stockQuantity     Int              @default(0)
-  lowStockThreshold Int              @default(5)
-  trackInventory    Boolean          @default(true)
-  status            ProductStatus    @default(ACTIVE)
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  id                     String           @id @default(uuid())
+  businessId             String
+  title                  String
+  sku                    String?
+  category               String?
+  brand                  String?
+  tags                   String[]         @default([])
+  description            String?
+  price                  Decimal          @db.Decimal(12, 2)
+  costPrice              Decimal?         @db.Decimal(12, 2)
+  stockQuantity          Int              @default(0)
+  lowStockThreshold      Int              @default(5)
+  trackInventory         Boolean          @default(true)
+  status                 ProductStatus    @default(ACTIVE)
+  marketplaceDiscoverable Boolean         @default(false)
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
 
-  business          Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  variants          ProductVariant[]
-  orderItems        OrderItem[]
-  channelListings   ProductChannelListing[]
+  business               Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  variants               ProductVariant[]
+  orderItems             OrderItem[]
+  channelListings        ProductChannelListing[]
+  marketplaceListing     MarketplaceListing?
+  reviews                Review[]
 
   @@index([businessId])
+  @@index([marketplaceDiscoverable, status])
+  @@index([category])
+  @@index([brand])
   @@map("products")
 }
 
@@ -775,32 +838,37 @@ model ProductVariant {
 }
 
 model Order {
-  id               String        @id @default(uuid())
-  businessId       String
-  orderNumber      String
-  customerId       String?
-  status           OrderStatus   @default(PENDING)
-  fulfillmentStatus FulfillmentStatus?
-  paymentStatus    PaymentStatus @default(PENDING)
-  source           OrderSource   @default(MANUAL)
-  currency         String        @default("USD")
-  subtotal         Decimal       @db.Decimal(12, 2)
-  discount         Decimal       @default(0) @db.Decimal(12, 2)
-  discountType     String?       // FIXED | PERCENTAGE
-  tax              Decimal       @default(0) @db.Decimal(12, 2)
-  shipping         Decimal       @default(0) @db.Decimal(12, 2)
-  totalAmount      Decimal       @db.Decimal(12, 2)
-  amountPaid       Decimal       @default(0) @db.Decimal(12, 2)
-  refundedAmountMinorUnits Int   @default(0)
-  stockDeducted    Boolean       @default(false)
-  notes            String?
-  customerNotes    String?
-  requiresApproval Boolean       @default(false)
-  shippingAddress  String?
-  returnPolicy     Json?
-  conversationId   String?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  id                        String        @id @default(uuid())
+  businessId                String
+  orderNumber               String
+  customerId                String?
+  status                    OrderStatus   @default(PENDING)
+  fulfillmentStatus         FulfillmentStatus?
+  paymentStatus             PaymentStatus @default(PENDING)
+  source                    OrderSource   @default(MANUAL)
+  currency                  String        @default("USD")
+  subtotal                  Decimal       @db.Decimal(12, 2)
+  discount                  Decimal       @default(0) @db.Decimal(12, 2)
+  discountType              String?       // FIXED | PERCENTAGE
+  tax                       Decimal       @default(0) @db.Decimal(12, 2)
+  shipping                  Decimal       @default(0) @db.Decimal(12, 2)
+  feesMinorUnits            Int           @default(0)
+  totalAmount               Decimal       @db.Decimal(12, 2)
+  amountPaid                Decimal       @default(0) @db.Decimal(12, 2)
+  refundedAmountMinorUnits  Int           @default(0)
+  totalSnapshot             Json?
+  taxBreakdown              Json?
+  shippingAddressStructured Json?
+  isSandbox                 Boolean       @default(false)
+  stockDeducted             Boolean       @default(false)
+  notes                     String?
+  customerNotes             String?
+  requiresApproval          Boolean       @default(false)
+  shippingAddress           String?
+  returnPolicy              Json?
+  conversationId            String?
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
 
   business         Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer         Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
@@ -816,12 +884,14 @@ model Order {
   socialTransaction SocialTransaction?
   disputes         TransactionDispute[]
   trustSignals     TrustSignal[]
+  reviews          Review[]
 
   @@unique([businessId, orderNumber])
   @@index([businessId])
   @@index([businessId, createdAt])
   @@index([businessId, status])
   @@index([businessId, paymentStatus])
+  @@index([businessId, isSandbox])
   @@index([customerId])
   @@index([conversationId])
   @@map("orders")
@@ -970,10 +1040,12 @@ model Shipment {
   trackingNumber     String?
   trackingUrl        String?
   status             ShipmentStatus  @default(PENDING)
+  isSandbox          Boolean         @default(false)
   shippingAddress    String
   city               String?
   state              String?
   postalCode         String?
+  countryCode        String?
   deliveryCharges    Decimal         @default(0) @db.Decimal(12, 2)
   estimatedDelivery  DateTime?
   actualDelivery     DateTime?
@@ -1080,6 +1152,7 @@ model SocialTransaction {
   surface                SocialSurface      @default(MANUAL_ENTRY)
   status                 TransactionStatus  @default(INQUIRY)
   publicTrackingToken    String             @unique @default(uuid())
+  isSandbox              Boolean            @default(false)
   externalUserId         String?
   externalConversationId String?
   externalListingId      String?
@@ -1110,6 +1183,7 @@ model SocialTransaction {
   refunds        Refund[]
   returns        ReturnRequest[]
   ledgerEntries  LedgerEntry[]
+  reviews        Review[]
 
   @@index([businessId])
   @@index([businessId, status])
@@ -1549,6 +1623,7 @@ model PaymentIntent {
   provider            PaymentProvider     @default(MANUAL)
   providerOrderId     String?
   status              PaymentIntentStatus @default(CREATED)
+  isSandbox           Boolean             @default(false)
   amountMinorUnits    Int
   capturedMinorUnits  Int                 @default(0)
   refundedMinorUnits  Int                 @default(0)
@@ -1616,6 +1691,7 @@ model Refund {
   disputeId           String?
   type                RefundType         @default(MANUAL_REFUND)
   status              RefundStatus       @default(REQUESTED)
+  isSandbox           Boolean            @default(false)
   amountMinorUnits    Int
   currency            String             @default("USD")
   reason              String
@@ -1727,6 +1803,7 @@ model LedgerEntry {
   account             String             @default("ORDER_RECEIVABLE")
   entryType           LedgerEntryType
   direction           LedgerDirection
+  isSandbox           Boolean            @default(false)
   amountMinorUnits    Int
   currency            String             @default("USD")
   referenceType       String
@@ -1903,4 +1980,584 @@ model ReconciliationEntry {
   @@index([runId, status])
   @@index([businessId, status])
   @@map("reconciliation_entries")
+}
+
+
+// =============================================================
+// Phase 6: Network, Marketplace, Global Scale & Developer Ecosystem
+// =============================================================
+
+enum MarketplaceOptInStatus {
+  NOT_DISCOVERABLE
+  DISCOVERABLE
+}
+
+enum SellerVerificationTier {
+  UNVERIFIED
+  IDENTITY_VERIFIED
+  BUSINESS_VERIFIED
+  HIGH_CONFIDENCE
+}
+
+enum VerificationRequestStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum AccountLifecycleStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+  DELETED
+}
+
+enum ReviewModerationState {
+  PUBLISHED
+  UNDER_REVIEW
+  HIDDEN
+  REMOVED
+}
+
+enum ApiKeyType {
+  PUBLIC
+  PRIVATE
+  SERVER
+}
+
+enum ApiEnvironment {
+  SANDBOX
+  LIVE
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  ROTATED
+  REVOKED
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  DELIVERING
+  DELIVERED
+  RETRYING
+  FAILED
+  DISABLED
+}
+
+enum IntegrationCategory {
+  PAYMENTS
+  LOGISTICS
+  CRM
+  ACCOUNTING
+  ANALYTICS
+  MARKETING
+  COMMUNICATION
+  COMMERCE
+}
+
+enum AbuseActionType {
+  FLAG
+  REVIEW
+  LIMIT
+  SUSPEND
+  APPEAL
+  RESOLVE
+}
+
+enum AbuseTargetType {
+  SELLER
+  BUYER
+  REVIEW
+  LISTING
+  API_APP
+  WEBHOOK
+}
+
+enum TaxCalculationMode {
+  EXCLUSIVE
+  INCLUSIVE
+}
+
+model SellerProfile {
+  id                  String                 @id @default(uuid())
+  businessId          String                 @unique
+  displayName         String
+  tagline             String?
+  about               String?
+  categories          String[]               @default([])
+  city                String?
+  state               String?
+  countryCode         String?
+  logoUrl             String?
+  coverImageUrl       String?
+  websiteUrl          String?
+  marketplaceOptIn    MarketplaceOptInStatus @default(NOT_DISCOVERABLE)
+  verificationTier    SellerVerificationTier @default(UNVERIFIED)
+  returnPolicySummary String?
+  socialLinks         Json?
+  supportedCurrencies String[]               @default([])
+  supportedLocales    String[]               @default(["en"])
+  accountStatus       AccountLifecycleStatus @default(ACTIVE)
+  verifiedAt          DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  business            Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([marketplaceOptIn, accountStatus])
+  @@index([verificationTier])
+  @@index([countryCode, city])
+  @@map("seller_profiles")
+}
+
+model SellerVerification {
+  id                 String                    @id @default(uuid())
+  businessId         String
+  requestedTier      SellerVerificationTier
+  status             VerificationRequestStatus @default(PENDING)
+  verificationMethod String
+  evidenceHash       String
+  evidenceReference  String?
+  reviewerNotes      String?
+  verifiedBy         String?
+  verifiedAt         DateTime?
+  expiresAt          DateTime?
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+
+  business           Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, status])
+  @@map("seller_verifications")
+}
+
+// Lightweight materialized discovery index backed by canonical Product + Inventory models.
+model MarketplaceListing {
+  id                    String                 @id @default(uuid())
+  businessId            String
+  productId             String                 @unique
+  title                 String
+  description           String?
+  category              String?
+  brand                 String?
+  tags                  String[]               @default([])
+  sku                   String?
+  priceMinorUnits       Int
+  currency              String                 @default("USD")
+  inStock               Boolean                @default(true)
+  stockQuantity         Int                    @default(0)
+  discoverable          Boolean                @default(false)
+  sellerVerifiedTier    SellerVerificationTier @default(UNVERIFIED)
+  sellerFulfillmentRate Float                  @default(100.0)
+  sellerCity            String?
+  sellerCountryCode     String?
+  reviewAverage         Float                  @default(0)
+  reviewCount           Int                    @default(0)
+  searchText            String
+  viewsCount            Int                    @default(0)
+  ordersCount           Int                    @default(0)
+  indexedAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  business              Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product               Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([discoverable, category, inStock])
+  @@index([discoverable, priceMinorUnits])
+  @@index([discoverable, sellerVerifiedTier])
+  @@index([businessId, discoverable])
+  @@index([brand])
+  @@index([sellerCountryCode, sellerCity])
+  @@map("marketplace_listings")
+}
+
+model NetworkReputation {
+  id                String   @id @default(uuid())
+  entityType        String   // SELLER | BUYER
+  entityId          String
+  observedFacts     Json
+  derivedBadges     Json
+  reviewStats       Json?
+  sampleSize        Int      @default(0)
+  observationWindow String   @default("180d")
+  verificationLevel String   @default("UNVERIFIED")
+  explanation       String
+  modelVersion      String   @default("v2")
+  computedAt        DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([entityType, entityId])
+  @@index([entityType, computedAt])
+  @@map("network_reputations")
+}
+
+model Review {
+  id                  String                @id @default(uuid())
+  businessId          String
+  orderId             String
+  socialTransactionId String
+  buyerIdentityId     String
+  productId           String?
+  reviewScopeKey      String                // orderId:productId or orderId:SELLER
+  rating              Int
+  title               String?
+  comment             String?
+  authorDisplayMode   ReviewDisplayMode     @default(VERIFIED_BUYER)
+  authorDisplayName   String
+  moderationState     ReviewModerationState @default(PUBLISHED)
+  moderationNotes     String?
+  sellerResponse      String?
+  sellerRespondedAt   DateTime?
+  sellerResponderId   String?
+  editableUntil       DateTime
+  editCount           Int                   @default(0)
+  editHistory         Json?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  business            Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order               Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  socialTransaction   SocialTransaction     @relation(fields: [socialTransactionId], references: [id], onDelete: Cascade)
+  buyerIdentity       BuyerIdentity         @relation(fields: [buyerIdentityId], references: [id], onDelete: Cascade)
+  product             Product?              @relation(fields: [productId], references: [id], onDelete: SetNull)
+  reports             ReviewReport[]
+
+  @@unique([buyerIdentityId, reviewScopeKey])
+  @@index([businessId, moderationState, createdAt])
+  @@index([productId, moderationState])
+  @@index([orderId])
+  @@map("reviews")
+}
+
+model ReviewReport {
+  id              String    @id @default(uuid())
+  reviewId        String
+  reporterType    String    // BUYER | SELLER | SYSTEM
+  reporterId      String?
+  reason          String
+  details         String?
+  status          String    @default("OPEN")
+  resolvedAt      DateTime?
+  resolutionNotes String?
+  createdAt       DateTime  @default(now())
+
+  review          Review    @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId, status])
+  @@map("review_reports")
+}
+
+model Developer {
+  id               String                 @id @default(uuid())
+  userId           String                 @unique
+  organizationName String?
+  websiteUrl       String?
+  contactEmail     String?
+  status           AccountLifecycleStatus @default(ACTIVE)
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applications     DeveloperApplication[]
+
+  @@map("developers")
+}
+
+model DeveloperApplication {
+  id              String                 @id @default(uuid())
+  developerId     String
+  businessId      String?
+  name            String
+  description     String?
+  environment     ApiEnvironment         @default(SANDBOX)
+  status          AccountLifecycleStatus @default(ACTIVE)
+  allowedOrigins  String[]               @default([])
+  rateLimitPerMin Int                    @default(120)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  developer       Developer              @relation(fields: [developerId], references: [id], onDelete: Cascade)
+  business        Business?              @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  apiKeys         ApiKey[]
+  webhooks        WebhookSubscription[]
+  usageLogs       ApiUsage[]
+
+  @@index([developerId])
+  @@index([businessId])
+  @@map("developer_applications")
+}
+
+model ApiKey {
+  id            String               @id @default(uuid())
+  applicationId String
+  businessId    String?
+  name          String
+  keyType       ApiKeyType           @default(SERVER)
+  environment   ApiEnvironment       @default(SANDBOX)
+  keyPrefix     String
+  keyHash       String               @unique
+  scopes        String[]             @default([])
+  status        ApiKeyStatus         @default(ACTIVE)
+  lastUsedAt    DateTime?
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  application   DeveloperApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  usageLogs     ApiUsage[]
+
+  @@index([applicationId, status])
+  @@index([businessId])
+  @@map("api_keys")
+}
+
+model WebhookSubscription {
+  id              String               @id @default(uuid())
+  applicationId   String
+  businessId      String
+  targetUrl       String
+  description     String?
+  eventTypes      String[]             @default([])
+  environment     ApiEnvironment       @default(SANDBOX)
+  encryptedSecret String
+  status          String               @default("ACTIVE")
+  failureCount    Int                  @default(0)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  application     DeveloperApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  deliveries      WebhookDelivery[]
+
+  @@index([businessId, environment, status])
+  @@index([applicationId])
+  @@map("webhook_subscriptions")
+}
+
+model WebhookDelivery {
+  id             String                @id @default(uuid())
+  subscriptionId String
+  businessId     String
+  eventId        String
+  eventType      String
+  payload        Json
+  signature      String
+  status         WebhookDeliveryStatus @default(PENDING)
+  attemptCount   Int                   @default(0)
+  maxAttempts    Int                   @default(5)
+  nextRetryAt    DateTime?
+  lastAttemptAt  DateTime?
+  deliveredAt    DateTime?
+  responseStatus Int?
+  responseBody   String?
+  errorMessage   String?
+  attemptHistory Json?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  subscription   WebhookSubscription   @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriptionId, eventId])
+  @@index([status, nextRetryAt])
+  @@index([businessId, createdAt])
+  @@map("webhook_deliveries")
+}
+
+model ApiUsage {
+  id            String               @id @default(uuid())
+  applicationId String
+  apiKeyId      String?
+  businessId    String?
+  method        String
+  endpoint      String
+  statusCode    Int
+  latencyMs     Int
+  environment   ApiEnvironment       @default(SANDBOX)
+  createdAt     DateTime             @default(now())
+
+  application   DeveloperApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  apiKey        ApiKey?              @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+
+  @@index([applicationId, createdAt])
+  @@index([businessId, createdAt])
+  @@map("api_usage")
+}
+
+model IntegrationProvider {
+  id           String                  @id @default(uuid())
+  slug         String                  @unique
+  name         String
+  category     IntegrationCategory
+  description  String
+  capabilities String[]                @default([])
+  authType     String                  @default("API_KEY")
+  logoUrl      String?
+  docsUrl      String?
+  isBuiltIn    Boolean                 @default(true)
+  isActive     Boolean                 @default(true)
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+
+  connections  IntegrationConnection[]
+
+  @@index([category, isActive])
+  @@map("integration_providers")
+}
+
+model IntegrationConnection {
+  id                   String              @id @default(uuid())
+  businessId           String
+  providerId           String
+  status               ConnectionStatus    @default(CONNECTED)
+  environment          ApiEnvironment      @default(SANDBOX)
+  externalAccountId    String?
+  encryptedCredentials String?
+  config               Json?
+  capabilities         String[]            @default([])
+  lastSyncAt           DateTime?
+  lastError            String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  business             Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  provider             IntegrationProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  events               IntegrationEvent[]
+
+  @@unique([businessId, providerId, environment])
+  @@index([businessId, status])
+  @@map("integration_connections")
+}
+
+model IntegrationEvent {
+  id           String                @id @default(uuid())
+  connectionId String
+  businessId   String
+  eventType    String
+  direction    String                @default("INBOUND")
+  status       String                @default("PROCESSED")
+  payload      Json
+  error        String?
+  createdAt    DateTime              @default(now())
+
+  connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, createdAt])
+  @@index([businessId, createdAt])
+  @@map("integration_events")
+}
+
+model TaxRule {
+  id              String             @id @default(uuid())
+  businessId      String?
+  name            String
+  countryCode     String
+  stateCode       String?
+  category        String?
+  rateBasisPoints Int
+  mode            TaxCalculationMode @default(EXCLUSIVE)
+  isActive        Boolean            @default(true)
+  priority        Int                @default(0)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  business        Business?          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  components      TaxComponent[]
+
+  @@index([businessId, countryCode, isActive])
+  @@index([countryCode, stateCode, category])
+  @@map("tax_rules")
+}
+
+model TaxComponent {
+  id              String   @id @default(uuid())
+  taxRuleId       String
+  name            String
+  rateBasisPoints Int
+  createdAt       DateTime @default(now())
+
+  taxRule         TaxRule  @relation(fields: [taxRuleId], references: [id], onDelete: Cascade)
+
+  @@index([taxRuleId])
+  @@map("tax_components")
+}
+
+model DataExport {
+  id              String         @id @default(uuid())
+  requesterType   String         // BUYER | SELLER
+  requesterId     String
+  buyerIdentityId String?
+  businessId      String?
+  exportType      String
+  format          String         @default("JSON")
+  status          String         @default("COMPLETED")
+  recordCount     Int            @default(0)
+  checksum        String?
+  payload         Json?
+  expiresAt       DateTime?
+  createdAt       DateTime       @default(now())
+
+  buyerIdentity   BuyerIdentity? @relation(fields: [buyerIdentityId], references: [id], onDelete: SetNull)
+  business        Business?      @relation(fields: [businessId], references: [id], onDelete: SetNull)
+
+  @@index([buyerIdentityId, createdAt])
+  @@index([businessId, createdAt])
+  @@map("data_exports")
+}
+
+model BackgroundJob {
+  id             String    @id @default(uuid())
+  businessId     String?
+  jobType        String
+  idempotencyKey String?   @unique
+  status         JobStatus @default(PENDING)
+  payload        Json
+  result         Json?
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(5)
+  nextRunAt      DateTime  @default(now())
+  lastError      String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  business       Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextRunAt])
+  @@index([businessId, jobType])
+  @@map("background_jobs")
+}
+
+model PlatformAbuseCase {
+  id              String           @id @default(uuid())
+  targetType      AbuseTargetType
+  targetId        String
+  businessId      String?
+  buyerIdentityId String?
+  reason          String
+  category        String
+  severity        String           @default("MEDIUM")
+  status          String           @default("OPEN")
+  actionTaken     AbuseActionType?
+  evidence        Json?
+  auditTrail      Json?
+  appealNotes     String?
+  resolvedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([targetType, targetId])
+  @@index([status, createdAt])
+  @@map("platform_abuse_cases")
+}
+
+model NetworkRateLimitEntry {
+  key       String   @id
+  count     Int      @default(1)
+  resetAt   DateTime
+  updatedAt DateTime @updatedAt
+
+  @@index([resetAt])
+  @@map("network_rate_limits")
 }

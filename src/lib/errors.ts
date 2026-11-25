@@ -126,6 +126,38 @@ export class WebhookVerificationError extends AppError {
   }
 }
 
+export class DeveloperAuthError extends AppError {
+  constructor(message: string = "Invalid or revoked API credentials") {
+    super(message, 401, "DEVELOPER_AUTH_FAILED");
+  }
+}
+
+export class ScopeForbiddenError extends AppError {
+  constructor(requiredScope: string) {
+    super(`API key lacks required scope: ${requiredScope}`, 403, "INSUFFICIENT_SCOPE", {
+      requiredScope,
+    });
+  }
+}
+
+export class ReviewEligibilityError extends AppError {
+  constructor(message: string = "Buyer is not eligible to review this transaction") {
+    super(message, 403, "REVIEW_NOT_ELIGIBLE");
+  }
+}
+
+export class MarketplaceUnavailableError extends AppError {
+  constructor(message: string = "Listing or seller is not discoverable on the network") {
+    super(message, 404, "MARKETPLACE_UNAVAILABLE");
+  }
+}
+
+export class AbuseBlockedError extends AppError {
+  constructor(message: string = "Action restricted due to platform safety review") {
+    super(message, 403, "ABUSE_RESTRICTION");
+  }
+}
+
 export function handleApiError(error: unknown, context?: { action?: string; businessId?: string; userId?: string }): NextResponse {
   if (error instanceof AppError) {
     logger.warn(`API Error [${error.code}]: ${error.message}`, {
