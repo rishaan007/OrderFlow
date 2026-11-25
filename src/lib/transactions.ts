@@ -24,6 +24,8 @@ import {
   UpdateDisputeInput,
 } from "@/types";
 import { TenantAccessError } from "./tenant";
+import { toMinorUnits, minorUnitsToMajorString } from "./money";
+import { evaluateReturnEligibility, resolveOrderReturnPolicy } from "./returns";
 
 /**
  * Maps legacy OrderSource enum to modern SocialPlatform & default SocialSurface
@@ -271,6 +273,19 @@ export async function getPublicTransactionByToken(
           shipments: {
             orderBy: { createdAt: "desc" },
             take: 1,
+            include: {
+              trackingEvents: {
+                orderBy: { occurredAt: "desc" },
+                take: 10,
+              },
+            },
+          },
+          refunds: {
+            orderBy: { createdAt: "desc" },
+          },
+          returns: {
+            orderBy: { createdAt: "desc" },
+            include: { items: true },
           },
         },
       },
@@ -301,6 +316,39 @@ export async function getPublicTransactionByToken(
 
   const trustMetrics = await getSellerTrustMetrics(transaction.businessId);
 
+  let returnEligibility: { eligible: boolean; reasons: string[]; returnWindowDays: number } | null = null;
+  if (transaction.order) {
+    const policy = resolveOrderReturnPolicy(transaction.order);
+    const evalRes = evaluateReturnEligibility({
+      order: {
+        status: transaction.order.status,
+        paymentStatus: transaction.order.paymentStatus,
+        createdAt: transaction.order.createdAt,
+        currency: transaction.order.currency,
+        amountPaid: transaction.order.amountPaid,
+        refundedAmountMinorUnits: transaction.order.refundedAmountMinorUnits || 0,
+        shipments: transaction.order.shipments,
+        items: transaction.order.items,
+        returns: transaction.order.returns,
+      },
+      policy,
+    });
+    returnEligibility = {
+      eligible: evalRes.eligible,
+      reasons: evalRes.reasons,
+      returnWindowDays: policy.returnWindowDays,
+    };
+  }
+
+  const orderTotalMinor = transaction.order
+    ? toMinorUnits(transaction.order.totalAmount, transaction.order.currency)
+    : 0;
+  const orderPaidMinor = transaction.order
+    ? toMinorUnits(transaction.order.amountPaid, transaction.order.currency)
+    : 0;
+  const outstandingMinor = Math.max(0, orderTotalMinor - orderPaidMinor);
+  const refundedMinor = transaction.order?.refundedAmountMinorUnits || 0;
+
   return {
     id: transaction.id,
     publicTrackingToken: transaction.publicTrackingToken,
@@ -322,12 +370,20 @@ export async function getPublicTransactionByToken(
       ? {
           orderNumber: transaction.order.orderNumber,
           status: transaction.order.status,
+          fulfillmentStatus: transaction.order.fulfillmentStatus,
           paymentStatus: transaction.order.paymentStatus,
           totalAmount: Number(transaction.order.totalAmount),
           amountPaid: Number(transaction.order.amountPaid),
+          outstandingBalance: Number(
+            minorUnitsToMajorString(outstandingMinor, transaction.order.currency)
+          ),
+          refundedAmount: Number(
+            minorUnitsToMajorString(refundedMinor, transaction.order.currency)
+          ),
           currency: transaction.order.currency,
           shippingAddress: transaction.order.shippingAddress,
           items: transaction.order.items.map((item) => ({
+            id: item.id,
             title: item.title,
             variantTitle: item.variantTitle,
             quantity: item.quantity,
@@ -338,6 +394,7 @@ export async function getPublicTransactionByToken(
             amount: Number(p.amount),
             method: p.method,
             status: p.status,
+            referenceNumber: p.referenceNumber,
             createdAt: p.createdAt.toISOString(),
           })),
           shipment: transaction.order.shipments[0]
@@ -348,8 +405,47 @@ export async function getPublicTransactionByToken(
                 status: transaction.order.shipments[0].status,
                 estimatedDelivery: transaction.order.shipments[0].estimatedDelivery?.toISOString() || null,
                 actualDelivery: transaction.order.shipments[0].actualDelivery?.toISOString() || null,
+                latestEvent: transaction.order.shipments[0].trackingEvents?.[0]
+                  ? {
+                      status: transaction.order.shipments[0].trackingEvents[0].status,
+                      description: transaction.order.shipments[0].trackingEvents[0].description,
+                      location: transaction.order.shipments[0].trackingEvents[0].location,
+                      occurredAt: transaction.order.shipments[0].trackingEvents[0].occurredAt.toISOString(),
+                    }
+                  : null,
+                trackingEvents: (transaction.order.shipments[0].trackingEvents || []).map((te) => ({
+                  status: te.status,
+                  description: te.description,
+                  location: te.location,
+                  occurredAt: te.occurredAt.toISOString(),
+                })),
               }
             : null,
+          refunds: (transaction.order.refunds || []).map((r) => ({
+            id: r.id,
+            status: r.status,
+            type: r.type,
+            amountMinorUnits: r.amountMinorUnits,
+            currency: r.currency,
+            reason: r.reason,
+            processedAt: r.processedAt ? r.processedAt.toISOString() : null,
+            createdAt: r.createdAt.toISOString(),
+          })),
+          returns: (transaction.order.returns || []).map((ret) => ({
+            id: ret.id,
+            status: ret.status,
+            reason: ret.reason,
+            requestedAmountMinorUnits: ret.requestedAmountMinorUnits,
+            approvedAmountMinorUnits: ret.approvedAmountMinorUnits,
+            currency: ret.currency,
+            trackingNumber: ret.trackingNumber,
+            carrier: ret.carrier,
+            returnLabelUrl: ret.returnLabelUrl,
+            sellerResponse: ret.sellerResponse,
+            createdAt: ret.createdAt.toISOString(),
+            updatedAt: ret.updatedAt.toISOString(),
+          })),
+          returnEligibility,
         }
       : null,
     timeline: transaction.timelineEvents.map((evt) => ({

@@ -15,6 +15,7 @@ import {
   Building2,
   ChevronRight,
   ShieldCheck,
+  Wallet,
 } from "lucide-react";
 import { AuthSession } from "@/types";
 
@@ -46,6 +47,13 @@ export function Sidebar({ session, onCloseMobile }: SidebarProps) {
       href: "/orders",
       icon: ShoppingBag,
       active: pathname.startsWith("/orders"),
+    },
+    {
+      title: "Operations",
+      href: "/operations",
+      icon: Wallet,
+      active: pathname.startsWith("/operations"),
+      badge: "Phase 5",
     },
     {
       title: "Inventory",

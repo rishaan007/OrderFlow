@@ -28,6 +28,20 @@ import {
   ConnectionHealthStatus,
   SocialEventType,
   EventProcessingStatus,
+  FulfillmentStatus,
+  PaymentIntentStatus,
+  PaymentAttemptStatus,
+  PaymentProvider,
+  RefundStatus,
+  RefundType,
+  ReturnStatus,
+  ReturnReason,
+  LedgerEntryType,
+  LedgerDirection,
+  ReconciliationStatus,
+  ReconciliationType,
+  ProviderHealthStatus,
+  WebhookProcessingStatus,
 } from "@prisma/client";
 
 export {
@@ -60,6 +74,20 @@ export {
   ConnectionHealthStatus,
   SocialEventType,
   EventProcessingStatus,
+  FulfillmentStatus,
+  PaymentIntentStatus,
+  PaymentAttemptStatus,
+  PaymentProvider,
+  RefundStatus,
+  RefundType,
+  ReturnStatus,
+  ReturnReason,
+  LedgerEntryType,
+  LedgerDirection,
+  ReconciliationStatus,
+  ReconciliationType,
+  ProviderHealthStatus,
+  WebhookProcessingStatus,
 };
 
 export interface SessionUser {
@@ -239,6 +267,7 @@ export interface OrderItemSummary {
   id: string;
   orderNumber: string;
   status: OrderStatus;
+  fulfillmentStatus?: FulfillmentStatus | null;
   paymentStatus: PaymentStatus;
   source: OrderSource;
   currency: string;
@@ -250,6 +279,7 @@ export interface OrderItemSummary {
   totalAmount: number;
   amountPaid?: number;
   outstandingBalance?: number;
+  refundedAmountMinorUnits?: number;
   stockDeducted: boolean;
   notes?: string | null;
   customerNotes?: string | null;
@@ -674,12 +704,16 @@ export interface PublicTransactionResponse {
   order?: {
     orderNumber: string;
     status: OrderStatus;
+    fulfillmentStatus?: FulfillmentStatus | null;
     paymentStatus: PaymentStatus;
     totalAmount: number;
     amountPaid: number;
+    outstandingBalance?: number;
+    refundedAmount?: number;
     currency: string;
     shippingAddress?: string | null;
     items: {
+      id?: string;
       title: string;
       variantTitle?: string | null;
       quantity: number;
@@ -690,6 +724,7 @@ export interface PublicTransactionResponse {
       amount: number;
       method: PaymentMethod;
       status: PaymentRecordStatus;
+      referenceNumber?: string | null;
       createdAt: string;
     }[];
     shipment?: {
@@ -699,6 +734,47 @@ export interface PublicTransactionResponse {
       status: ShipmentStatus;
       estimatedDelivery?: string | null;
       actualDelivery?: string | null;
+      latestEvent?: {
+        status: ShipmentStatus;
+        description?: string | null;
+        location?: string | null;
+        occurredAt: string;
+      } | null;
+      trackingEvents?: {
+        status: ShipmentStatus;
+        description?: string | null;
+        location?: string | null;
+        occurredAt: string;
+      }[];
+    } | null;
+    refunds?: {
+      id: string;
+      status: RefundStatus;
+      type: RefundType;
+      amountMinorUnits: number;
+      currency: string;
+      reason: string;
+      processedAt?: string | null;
+      createdAt: string;
+    }[];
+    returns?: {
+      id: string;
+      status: ReturnStatus;
+      reason: ReturnReason;
+      requestedAmountMinorUnits: number;
+      approvedAmountMinorUnits?: number | null;
+      currency: string;
+      trackingNumber?: string | null;
+      carrier?: DeliveryPartner | null;
+      returnLabelUrl?: string | null;
+      sellerResponse?: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }[];
+    returnEligibility?: {
+      eligible: boolean;
+      reasons: string[];
+      returnWindowDays: number;
     } | null;
   } | null;
   timeline: {

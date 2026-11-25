@@ -45,6 +45,14 @@ export async function assessTransactionRisk(
       order: {
         include: {
           payments: { orderBy: { createdAt: "desc" }, take: 3 },
+          paymentIntents: {
+            include: {
+              attempts: { orderBy: { createdAt: "desc" }, take: 5 },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 3,
+          },
+          refunds: { orderBy: { createdAt: "desc" }, take: 3 },
           shipments: { orderBy: { createdAt: "desc" }, take: 1 },
         },
       },
@@ -124,7 +132,10 @@ export async function assessTransactionRisk(
     }
 
     const hasRejectedPayment = order.payments?.some((p) => (p.status as string) === "REJECTED");
-    if (hasRejectedPayment) {
+    const hasFailedAttempt = order.paymentIntents?.some((pi) =>
+      pi.attempts.some((a) => a.status === "FAILED")
+    );
+    if (hasRejectedPayment || hasFailedAttempt) {
       reasons.push({
         code: "PAYMENT_FAILED",
         severity: "HIGH",
